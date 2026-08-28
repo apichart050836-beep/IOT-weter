@@ -20,7 +20,7 @@ npm run dev
 ### 2. สร้าง Supabase project (เมื่อพร้อมใช้ข้อมูลจริง)
 1. ไปที่ [supabase.com](https://supabase.com/) → New project
 2. เปิดใช้ **Authentication** → Providers → Email → สร้างผู้ใช้ 1 คนสำหรับตัวเอง (Authentication → Users → Add user)
-3. ไปที่ SQL Editor → รันไฟล์ `supabase/migrations/0001_init.sql` เพื่อสร้างตาราง `devices`, `readings`, `water_rate_settings`
+3. ไปที่ SQL Editor → รันไฟล์ทั้งหมดใน `supabase/migrations/` ตามลำดับเลขไฟล์ (`0001_init.sql` สร้างตาราง `devices`, `readings`, `water_rate_settings`; `0002_valve_control.sql` เพิ่มคอลัมน์คำสั่งวาล์วสำหรับปุ่มเปิด/ปิดวาล์วและสไลเดอร์บนแดชบอร์ด)
 4. ไปที่ Project Settings → API → คัดลอก **Project URL**, **anon public key**, และ **service_role key**
 
 ### 3. ตั้งค่า environment variables
@@ -60,7 +60,8 @@ curl -X POST "http://localhost:3000/api/ingest" \
 - `app/api/ingest/route.ts` — API route รับข้อมูลจากอุปกรณ์ IoT
 - `lib/supabase/` — Supabase client (`client.ts`), admin client สำหรับ server (`admin.ts`), query helpers (`queries.ts`)
 - `lib/demoAuth.ts` — บัญชีทดสอบสำหรับลองระบบก่อนตั้งค่า Supabase จริง
-- `supabase/migrations/0001_init.sql` — schema ฐานข้อมูล + Row Level Security
+- `supabase/migrations/` — schema ฐานข้อมูล + Row Level Security (รันตามลำดับเลขไฟล์)
+- `scripts/seed-demo-data.mjs` — สร้างมิเตอร์ 1 ตัว + ข้อมูล readings จำลอง 24 ชม. ลง Supabase (รันซ้ำได้ ล้างของเก่าอัตโนมัติ)
 
 ## รันแบบไม่ต้องเปิด terminal เอง
 - ดับเบิลคลิก `run.bat` — เปิด dev server (auto-restart ถ้า crash) แล้วเปิดเบราว์เซอร์ไปที่ `/dashboard` ให้อัตโนมัติ

@@ -11,6 +11,21 @@ import {
   Filler,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import {
+  getPrimaryDeviceId,
+  subscribeLatestReadings,
+  subscribeDevice,
+  getVolumeSum,
+  getDevice,
+  setDeviceCommand,
+  getRateTiers,
+  subscribeWaterRate,
+  setBillingCutoffDay,
+} from "@/lib/supabase/queries";
+import { billingPeriodStart, now as dateNow } from "@/lib/dateRanges";
+import type { Reading, RateTier, Device } from "@/lib/supabase/types";
+import { useSession } from "@/lib/useSession";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
 
@@ -20,11 +35,13 @@ const SERVICE_FEE = 25.0;
 const VAT_RATE = 0.07;
 const VALVE_DELAY_MS = 5000;
 const CHART_LABELS = ["60s", "50s", "40s", "30s", "20s", "10s", "5s", "Now"];
-const TIERS = [
-  { limit: 10, rate: 10.2 },
-  { limit: 10, rate: 16.0 },
-  { limit: 10, rate: 19.0 },
-  { limit: Infinity, rate: 21.2 },
+
+// ใช้เป็นค่าเริ่มต้นก่อนโหลดจาก Supabase เสร็จ (หรือตอนยังไม่ได้ตั้งค่า Supabase)
+const DEFAULT_TIERS: RateTier[] = [
+  { tierOrder: 1, label: "0 - 10 ลบ.ม. (ขั้นต้น)", unitLimit: 10, ratePerUnit: 10.2 },
+  { tierOrder: 2, label: "11 - 20 ลบ.ม.", unitLimit: 10, ratePerUnit: 16.0 },
+  { tierOrder: 3, label: "21 - 30 ลบ.ม.", unitLimit: 10, ratePerUnit: 19.0 },
+  { tierOrder: 4, label: "31 ลบ.ม. ขึ้นไป", unitLimit: null, ratePerUnit: 21.2 },
 ];
 
 interface BillResult {
@@ -38,17 +55,17 @@ interface BillResult {
   dailyAvg: number;
 }
 
-function calculateWaterBill(volume: number): BillResult {
+function calculateWaterBill(volume: number, tiers: RateTier[]): BillResult {
   let remaining = volume;
   let waterCost = 0;
-  const tierUsages = [0, 0, 0, 0];
-  const tierCosts = [0, 0, 0, 0];
+  const tierUsages = tiers.map(() => 0);
+  const tierCosts = tiers.map(() => 0);
 
-  TIERS.forEach((tier, i) => {
+  tiers.forEach((tier, i) => {
     if (remaining > 0) {
-      const take = Math.min(remaining, tier.limit);
+      const take = Math.min(remaining, tier.unitLimit ?? Infinity);
       tierUsages[i] = take;
-      tierCosts[i] = take * tier.rate;
+      tierCosts[i] = take * tier.ratePerUnit;
       waterCost += tierCosts[i];
       remaining -= take;
     }
@@ -71,6 +88,99 @@ function calculateWaterBill(volume: number): BillResult {
 
 type Toast = { message: string; tone: "success" | "error" };
 
+function LinkDeviceModal({
+  keyDraft,
+  setKeyDraft,
+  nameDraft,
+  setNameDraft,
+  locationDraft,
+  setLocationDraft,
+  loading,
+  onClose,
+  onSubmit,
+}: {
+  keyDraft: string;
+  setKeyDraft: (v: string) => void;
+  nameDraft: string;
+  setNameDraft: (v: string) => void;
+  locationDraft: string;
+  setLocationDraft: (v: string) => void;
+  loading: boolean;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-left shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <h3 className="flex items-center gap-2 font-bold text-cyan-400">
+            <i className="fa-solid fa-microchip text-xl" /> ผูกอุปกรณ์ ESP
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white">
+            <i className="fa-solid fa-xmark text-lg" />
+          </button>
+        </div>
+
+        <p className="text-xs text-slate-400">
+          กรอกรหัสลับ (device key) ที่ตั้งไว้ในเฟิร์มแวร์ ESP32 — ไม่ใช่ device_key_hash ระบบจะคำนวณ
+          hash ให้เองฝั่งเซิร์ฟเวอร์ ถ้ายังไม่เคยลงทะเบียนอุปกรณ์นี้มาก่อน ระบบจะสร้างให้ใหม่และผูกกับบัญชีนี้ทันที
+        </p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-300">
+              รหัสลับอุปกรณ์ (device key) *
+            </label>
+            <input
+              type="text"
+              value={keyDraft}
+              onChange={(e) => setKeyDraft(e.target.value)}
+              placeholder="เช่น YOUR_SECRET_KEY"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-300">ชื่ออุปกรณ์ (ถ้ามี)</label>
+            <input
+              type="text"
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              placeholder="เช่น มิเตอร์น้ำหลัก"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-300">ตำแหน่งติดตั้ง (ถ้ามี)</label>
+            <input
+              type="text"
+              value={locationDraft}
+              onChange={(e) => setLocationDraft(e.target.value)}
+              placeholder="เช่น หน้าบ้าน"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            onClick={onClose}
+            className="rounded-xl bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700"
+          >
+            ยกเลิก
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={loading}
+            className="rounded-xl bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
+          >
+            {loading ? "กำลังผูก..." : "ผูกอุปกรณ์"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [clock, setClock] = useState("--:--:--");
@@ -89,9 +199,29 @@ export default function DashboardPage() {
   const [lineTokenDraft, setLineTokenDraft] = useState("");
   const [toast, setToast] = useState<Toast | null>(null);
 
+  // ข้อมูลจริงจาก Supabase (ใช้เมื่อ isSupabaseConfigured เท่านั้น) — ไม่งั้น fallback ไปโหมดจำลองทั้งหมด
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [deviceLookupDone, setDeviceLookupDone] = useState(false);
+  const [dbReadings, setDbReadings] = useState<Reading[]>([]);
+  const [dbVolumeThisMonthLiters, setDbVolumeThisMonthLiters] = useState<number | null>(null);
+  const [rateTiers, setRateTiers] = useState<RateTier[]>(DEFAULT_TIERS);
+  const [deviceInfo, setDeviceInfo] = useState<Device | null>(null);
+  const [billingCutoffDay, setBillingCutoffDayState] = useState(1);
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [cutoffDayDraft, setCutoffDayDraft] = useState("1");
+
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [linkKeyDraft, setLinkKeyDraft] = useState("");
+  const [linkNameDraft, setLinkNameDraft] = useState("");
+  const [linkLocationDraft, setLinkLocationDraft] = useState("");
+  const [linkLoading, setLinkLoading] = useState(false);
+
+  const { signOut } = useSession();
+
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flowCommandTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (localStorage.getItem("theme") === "light") setTheme("light");
@@ -107,12 +237,77 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
-  const sliderFactor = flowPercent / 100;
-  const currentFlow = actualValveOpen ? Number((BASE_FLOW_LPM * sliderFactor).toFixed(1)) : 0;
-  const percentage = Math.round((currentFlow / BASE_FLOW_LPM) * 100);
-  const billing = useMemo(() => calculateWaterBill(volume), [volume]);
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    getPrimaryDeviceId().then((id) => {
+      setDeviceId(id);
+      setDeviceLookupDone(true);
+    });
+    getRateTiers().then((tiers) => {
+      if (tiers.length > 0) setRateTiers(tiers);
+    });
+  }, []);
+
+  // โหลดคำสั่งวาล์วล่าสุดที่เคยตั้งไว้ (ครั้งเดียวตอนเปิดหน้า) ให้ toggle/slider ตรงกับสถานะจริง
+  useEffect(() => {
+    if (!isSupabaseConfigured || !deviceId) return;
+    getDevice(deviceId).then((device) => {
+      if (!device) return;
+      setMasterChecked(device.valveOpen);
+      setActualValveOpen(device.valveOpen);
+      setFlowPercent(device.targetFlowPercent);
+    });
+  }, [deviceId]);
 
   useEffect(() => {
+    if (!isSupabaseConfigured || !deviceId) return;
+    return subscribeLatestReadings(deviceId, 40, setDbReadings);
+  }, [deviceId]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !deviceId) return;
+    return subscribeDevice(deviceId, setDeviceInfo);
+  }, [deviceId]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    return subscribeWaterRate((settings) => {
+      setBillingCutoffDayState(settings.billingCutoffDay);
+      setCutoffDayDraft(String(settings.billingCutoffDay));
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !deviceId) return;
+    let cancelled = false;
+    async function load() {
+      const total = await getVolumeSum(deviceId as string, billingPeriodStart(billingCutoffDay), dateNow());
+      if (!cancelled) setDbVolumeThisMonthLiters(total);
+    }
+    load();
+    const id = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [deviceId, billingCutoffDay]);
+
+  const sliderFactor = flowPercent / 100;
+  const currentFlow = actualValveOpen ? Number((BASE_FLOW_LPM * sliderFactor).toFixed(1)) : 0;
+
+  const hasDbReadings = isSupabaseConfigured && dbReadings.length > 0;
+  const displayFlow = hasDbReadings ? dbReadings[dbReadings.length - 1].flowRateLpm : currentFlow;
+  const percentage = Math.min(100, Math.round((displayFlow / BASE_FLOW_LPM) * 100));
+
+  const volumeForBilling =
+    isSupabaseConfigured && dbVolumeThisMonthLiters !== null ? dbVolumeThisMonthLiters / 1000 : volume;
+  const billing = useMemo(
+    () => calculateWaterBill(volumeForBilling, rateTiers),
+    [volumeForBilling, rateTiers]
+  );
+
+  useEffect(() => {
+    if (isSupabaseConfigured) return; // ใช้ข้อมูลจริงจาก Supabase แทน ไม่ต้องจำลองเพิ่ม
     const id = setInterval(() => {
       setChartData((prev) => {
         const randomVar = currentFlow > 0 ? Math.random() * 1.5 - 0.75 : 0;
@@ -131,6 +326,7 @@ export default function DashboardPage() {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      if (flowCommandTimeoutRef.current) clearTimeout(flowCommandTimeoutRef.current);
     };
   }, []);
 
@@ -163,7 +359,23 @@ export default function DashboardPage() {
       if (intervalRef.current) clearInterval(intervalRef.current);
       setPending(false);
       setActualValveOpen(checked);
+      if (isSupabaseConfigured && deviceId) {
+        setDeviceCommand(deviceId, { valveOpen: checked }).catch(() =>
+          showToast("บันทึกคำสั่งวาล์วไม่สำเร็จ", "error")
+        );
+      }
     }, VALVE_DELAY_MS);
+  }
+
+  function handleFlowPercentChange(value: number) {
+    setFlowPercent(value);
+    if (!isSupabaseConfigured || !deviceId) return;
+    if (flowCommandTimeoutRef.current) clearTimeout(flowCommandTimeoutRef.current);
+    flowCommandTimeoutRef.current = setTimeout(() => {
+      setDeviceCommand(deviceId, { targetFlowPercent: value }).catch(() =>
+        showToast("บันทึกค่าที่ปรับไม่สำเร็จ", "error")
+      );
+    }, 400);
   }
 
   function sendLineAlert(message: string) {
@@ -187,6 +399,65 @@ export default function DashboardPage() {
     setLineToken(trimmed);
     showToast("บันทึก LINE Token เรียบร้อยแล้ว!", "success");
     setLineModalOpen(false);
+  }
+
+  async function saveBillingCutoffDay() {
+    const day = Math.min(28, Math.max(1, Number(cutoffDayDraft) || 1));
+    if (!isSupabaseConfigured) {
+      showToast("ต้องตั้งค่า Supabase ก่อนถึงจะบันทึกได้", "error");
+      return;
+    }
+    try {
+      await setBillingCutoffDay(day);
+      showToast(`ตั้งวันตัดรอบบิลเป็นวันที่ ${day} ของทุกเดือนแล้ว`, "success");
+      setSettingsModalOpen(false);
+    } catch {
+      showToast("บันทึกไม่สำเร็จ", "error");
+    }
+  }
+
+  async function handleLinkDevice() {
+    if (!isSupabaseConfigured) {
+      showToast("ต้องตั้งค่า Supabase ก่อนถึงจะผูกอุปกรณ์ได้", "error");
+      return;
+    }
+    if (!linkKeyDraft.trim()) {
+      showToast("กรอกรหัสลับของอุปกรณ์ก่อน", "error");
+      return;
+    }
+    setLinkLoading(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("no session");
+
+      const res = await fetch("/api/devices/link", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          deviceKey: linkKeyDraft.trim(),
+          name: linkNameDraft.trim() || undefined,
+          location: linkLocationDraft.trim() || undefined,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "link failed");
+
+      showToast(result.created ? "ลงทะเบียนอุปกรณ์ใหม่และผูกกับบัญชีนี้แล้ว" : "ผูกอุปกรณ์กับบัญชีนี้แล้ว", "success");
+      setLinkModalOpen(false);
+      setLinkKeyDraft("");
+      setLinkNameDraft("");
+      setLinkLocationDraft("");
+      setDeviceId(result.deviceId);
+      setDeviceLookupDone(true);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "ผูกอุปกรณ์ไม่สำเร็จ", "error");
+    } finally {
+      setLinkLoading(false);
+    }
   }
 
   const statusLog = pending
@@ -223,12 +494,19 @@ export default function DashboardPage() {
     ? { animationPlayState: "running", animationDuration: `${animSpeed}s` }
     : { animationPlayState: "paused" };
 
+  const chartLabels = hasDbReadings
+    ? dbReadings.map((r) =>
+        new Date(r.recordedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
+      )
+    : CHART_LABELS;
+  const chartValues = hasDbReadings ? dbReadings.map((r) => r.flowRateLpm) : chartData;
+
   const chart = {
-    labels: CHART_LABELS,
+    labels: chartLabels,
     datasets: [
       {
         label: "Flow Rate (L/min)",
-        data: chartData,
+        data: chartValues,
         borderColor: "#00F2FE",
         backgroundColor: "rgba(0, 242, 254, 0.15)",
         borderWidth: 2,
@@ -257,6 +535,39 @@ export default function DashboardPage() {
     },
   };
 
+  if (isSupabaseConfigured && deviceLookupDone && !deviceId) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-950 p-4 text-center text-slate-100">
+        <i className="fa-solid fa-droplet text-3xl text-cyan-500" />
+        <h1 className="text-lg font-bold">ยังไม่มีอุปกรณ์ผูกกับบัญชีนี้</h1>
+        <p className="max-w-sm text-sm text-slate-400">
+          ถ้ามีอุปกรณ์ ESP32 อยู่แล้ว กรอกรหัสลับของอุปกรณ์เพื่อผูกกับบัญชีนี้ได้เลย
+          หรือถ้ายังไม่มีอุปกรณ์ ติดต่อผู้ดูแลระบบ
+        </p>
+        <button
+          onClick={() => setLinkModalOpen(true)}
+          className="mt-2 flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
+        >
+          <i className="fa-solid fa-microchip" />
+          ผูกอุปกรณ์ ESP
+        </button>
+        {linkModalOpen && (
+          <LinkDeviceModal
+            keyDraft={linkKeyDraft}
+            setKeyDraft={setLinkKeyDraft}
+            nameDraft={linkNameDraft}
+            setNameDraft={setLinkNameDraft}
+            locationDraft={linkLocationDraft}
+            setLocationDraft={setLinkLocationDraft}
+            loading={linkLoading}
+            onClose={() => setLinkModalOpen(false)}
+            onSubmit={handleLinkDevice}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={theme === "dark" ? "dark" : ""}>
       <div className="dashboard-bg min-h-screen font-[family-name:var(--font-sarabun)] p-4 antialiased md:p-6 text-slate-800 dark:text-slate-100">
@@ -277,16 +588,23 @@ export default function DashboardPage() {
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   ศูนย์ควบคุมและตรวจสอบสถานะการทำงานแบบเรียลไทม์ (ระบบท่อต่อตรงประปา)
                 </p>
+                {deviceInfo && (
+                  <p className="mt-0.5 text-xs font-medium text-cyan-600 dark:text-cyan-400">
+                    <i className="fa-solid fa-location-dot mr-1" />
+                    {deviceInfo.name}
+                    {deviceInfo.location ? ` • ${deviceInfo.location}` : ""}
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="flex items-center gap-3 text-xs">
               <button
                 onClick={openLineModal}
-                className="flex items-center gap-2 rounded-xl bg-emerald-500 px-3 py-1.5 font-medium text-white shadow-sm transition hover:bg-emerald-600"
+                title="ตั้งค่า LINE Notify"
+                className="flex items-center justify-center rounded-xl bg-emerald-500 p-2 text-white shadow-sm transition hover:bg-emerald-600"
               >
                 <i className="fa-brands fa-line text-lg" />
-                <span>ตั้งค่า LINE Notify</span>
               </button>
 
               <button
@@ -296,14 +614,53 @@ export default function DashboardPage() {
                 <i className={`fa-solid ${theme === "dark" ? "fa-moon" : "fa-sun"} text-base`} />
               </button>
 
-              <div className="hidden items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-emerald-600 sm:flex dark:text-emerald-400">
-                <span className="h-2 w-2 animate-ping rounded-full bg-emerald-500" />
-                <span>Online</span>
+              <button
+                onClick={() => {
+                  setCutoffDayDraft(String(billingCutoffDay));
+                  setSettingsModalOpen(true);
+                }}
+                title="ตั้งค่าวันตัดรอบบิล"
+                className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-200 px-3 py-2 text-slate-700 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                <i className="fa-solid fa-file-invoice text-base" />
+                <span className="hidden sm:inline">ตั้งค่ารอบบิล</span>
+              </button>
+
+              <button
+                onClick={() => setLinkModalOpen(true)}
+                title="ผูกอุปกรณ์ ESP"
+                className="flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-cyan-600 transition dark:text-cyan-400"
+              >
+                <i className="fa-solid fa-microchip text-base" />
+                <span className="hidden sm:inline">ผูกอุปกรณ์ ESP</span>
+              </button>
+
+              <div
+                className={`hidden items-center gap-2 rounded-full border px-3 py-1.5 sm:flex ${
+                  hasDbReadings
+                    ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400"
+                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    hasDbReadings ? "animate-pulse bg-cyan-500" : "animate-ping bg-emerald-500"
+                  }`}
+                />
+                <span>{hasDbReadings ? "ข้อมูลจริงจาก Supabase" : "Online"}</span>
               </div>
 
               <div className="rounded-xl border border-slate-300 bg-slate-200 px-3 py-1.5 font-[family-name:var(--font-orbitron)] text-slate-700 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300">
                 {clock}
               </div>
+
+              <button
+                onClick={signOut}
+                title="ออกจากระบบ"
+                className="rounded-xl border border-red-300 bg-red-50 p-2 text-red-600 transition hover:bg-red-100 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-400 dark:hover:bg-red-950/60"
+              >
+                <i className="fa-solid fa-right-from-bracket text-base" />
+              </button>
             </div>
           </header>
 
@@ -384,7 +741,7 @@ export default function DashboardPage() {
                       </span>
                       <div className="flex items-baseline gap-2">
                         <span className="font-[family-name:var(--font-orbitron)] text-5xl font-extrabold text-cyan-500 dark:text-cyan-400">
-                          {currentFlow.toFixed(1)}
+                          {displayFlow.toFixed(1)}
                         </span>
                         <span className="font-medium text-slate-600 dark:text-slate-300">L/min</span>
                       </div>
@@ -431,8 +788,8 @@ export default function DashboardPage() {
                   <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
                     <div className="mb-2 flex items-center justify-between text-xs">
                       <span className="text-slate-500 dark:text-slate-400">
-                        <i className="fa-solid fa-chart-line mr-1 text-cyan-500" /> กราฟแสดงผล 60
-                        วินาทีย้อนหลัง
+                        <i className="fa-solid fa-chart-line mr-1 text-cyan-500" />{" "}
+                        {hasDbReadings ? "ประวัติล่าสุดจากฐานข้อมูล" : "กราฟแสดงผล 60 วินาทีย้อนหลัง"}
                       </span>
                       <span className="font-[family-name:var(--font-orbitron)] text-cyan-500">
                         Live Updates
@@ -644,7 +1001,7 @@ export default function DashboardPage() {
                         min={0}
                         max={100}
                         value={flowPercent}
-                        onChange={(e) => setFlowPercent(Number(e.target.value))}
+                        onChange={(e) => handleFlowPercentChange(Number(e.target.value))}
                         className="h-2 w-full cursor-pointer appearance-none rounded-lg border border-slate-300 bg-slate-300 accent-cyan-500 dark:border-slate-700 dark:bg-slate-800"
                       />
                     </div>
@@ -662,7 +1019,9 @@ export default function DashboardPage() {
                 Payments)
               </span>
               <span className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                รอบบิลปัจจุบัน (เดือนนี้)
+                {billingCutoffDay === 1
+                  ? "รอบบิลปัจจุบัน (เดือนนี้)"
+                  : `รอบบิลปัจจุบัน (ตัดทุกวันที่ ${billingCutoffDay})`}
               </span>
             </div>
 
@@ -740,15 +1099,10 @@ export default function DashboardPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 font-[family-name:var(--font-orbitron)] dark:divide-slate-800">
-                      {[
-                        ["0 - 10 ลบ.ม. (ขั้นต้น)", "10.20"],
-                        ["11 - 20 ลบ.ม.", "16.00"],
-                        ["21 - 30 ลบ.ม.", "19.00"],
-                        ["31 ลบ.ม. ขึ้นไป", "21.20"],
-                      ].map(([label, rate], i) => (
-                        <tr key={label} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
-                          <td className="px-4 py-2.5">{label}</td>
-                          <td className="px-4 py-2.5">{rate}</td>
+                      {rateTiers.map((tier, i) => (
+                        <tr key={tier.label} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                          <td className="px-4 py-2.5">{tier.label}</td>
+                          <td className="px-4 py-2.5">{tier.ratePerUnit.toFixed(2)}</td>
                           <td className="px-4 py-2.5 font-semibold text-cyan-600 dark:text-cyan-400">
                             {billing.tierUsages[i].toFixed(2)}
                           </td>
@@ -852,6 +1206,74 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* SETTINGS MODAL */}
+        {settingsModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div className="glass-panel w-full max-w-md space-y-4 rounded-2xl p-6">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-800">
+                <h3 className="flex items-center gap-2 font-bold text-cyan-600 dark:text-cyan-400">
+                  <i className="fa-solid fa-file-invoice text-xl" /> ตั้งค่ารอบบิล
+                </h3>
+                <button
+                  onClick={() => setSettingsModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                >
+                  <i className="fa-solid fa-xmark text-lg" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                กำหนดวันที่ตัดรอบบิลของทุกเดือน เช่น ตั้งเป็น 5 → รอบบิลจะเริ่มนับใหม่ทุกวันที่ 5
+                ของเดือน (แทนที่จะเริ่มวันที่ 1 เสมอ) ระบบจะรีเซตยอดสะสมให้อัตโนมัติทุกเดือนตามวันนี้
+              </p>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  ตัดรอบบิลทุกวันที่ (1-28)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={28}
+                  value={cutoffDayDraft}
+                  onChange={(e) => setCutoffDayDraft(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  onClick={() => setSettingsModalOpen(false)}
+                  className="rounded-xl bg-slate-200 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={saveBillingCutoffDay}
+                  className="rounded-xl bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400"
+                >
+                  บันทึก
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* LINK DEVICE MODAL */}
+        {linkModalOpen && (
+          <LinkDeviceModal
+            keyDraft={linkKeyDraft}
+            setKeyDraft={setLinkKeyDraft}
+            nameDraft={linkNameDraft}
+            setNameDraft={setLinkNameDraft}
+            locationDraft={linkLocationDraft}
+            setLocationDraft={setLinkLocationDraft}
+            loading={linkLoading}
+            onClose={() => setLinkModalOpen(false)}
+            onSubmit={handleLinkDevice}
+          />
         )}
 
         {/* TOAST */}
