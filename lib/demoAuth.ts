@@ -1,7 +1,7 @@
 "use client";
 
-// บัญชีทดสอบชั่วคราวสำหรับลองระบบ login ก่อนตั้งค่า Firebase Auth จริง
-// ใช้ localStorage เก็บสถานะ ไม่ปลอดภัยสำหรับ production — ลบไฟล์นี้ทิ้งเมื่อเปลี่ยนไปใช้ Firebase Auth จริงแล้ว
+// บัญชีทดสอบชั่วคราวสำหรับลองระบบ login ก่อนตั้งค่า Supabase Auth จริง
+// ใช้ localStorage เก็บสถานะ ไม่ปลอดภัยสำหรับ production — ลบไฟล์นี้ทิ้งเมื่อเปลี่ยนไปใช้ Supabase Auth จริงแล้ว
 export const DEMO_USERNAME = "admintest";
 export const DEMO_PASSWORD = "admintest1234";
 

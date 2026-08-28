@@ -3,13 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  signInWithEmailAndPassword,
-  setPersistence,
-  browserLocalPersistence,
-  browserSessionPersistence,
-} from "firebase/auth";
-import { auth, isFirebaseConfigured } from "@/lib/firebase/client";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import { demoLogin, DEMO_USERNAME, DEMO_PASSWORD } from "@/lib/demoAuth";
 
 // ตรงกับ SKIP_AUTH ใน app/dashboard/layout.tsx — ปิดหน้า login ชั่วคราวเมื่อ bypass auth อยู่
@@ -19,7 +13,6 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -33,9 +26,12 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      if (isFirebaseConfigured) {
-        await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
-        await signInWithEmailAndPassword(auth, username, pass);
+      if (isSupabaseConfigured) {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: username,
+          password: pass,
+        });
+        if (signInError) throw signInError;
       } else {
         if (!demoLogin(username, pass)) {
           throw new Error("invalid demo credentials");
@@ -80,10 +76,10 @@ export default function LoginPage() {
         </div>
 
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
-          {!isFirebaseConfigured && (
+          {!isSupabaseConfigured && (
             <div className="mb-5 space-y-2 rounded-lg bg-amber-950/40 px-3 py-2.5 text-sm text-amber-300 ring-1 ring-amber-800/50">
               <p>
-                โหมดทดสอบ (ยังไม่ได้ตั้งค่า Firebase) — ใช้บัญชีทดสอบ{" "}
+                โหมดทดสอบ (ยังไม่ได้ตั้งค่า Supabase) — ใช้บัญชีทดสอบ{" "}
                 <code className="rounded bg-amber-900/50 px-1">{DEMO_USERNAME}</code> เข้าสู่ระบบได้เลย
               </p>
               <button
@@ -135,8 +131,7 @@ export default function LoginPage() {
               <input
                 type="checkbox"
                 id="remember"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
+                defaultChecked
                 className="h-4 w-4 rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0"
               />
               <label htmlFor="remember" className="cursor-pointer text-xs text-slate-400">
