@@ -61,8 +61,7 @@ const FEATURES = [
   {
     icon: "🌊",
     title: "วัดการไหลแม่นยำ",
-    description:
-      'ใช้ Flow Sensor รุ่น FS300A (G3/4") รองรับอัตราไหล 1-60L/min แรงดันสูงสุด <1.20Mpa',
+    description: "ใช้ Flow Sensor รองรับอัตราไหล 1-60L/min แรงดันสูงสุด <1.20Mpa",
   },
   {
     icon: "⚙️",
@@ -129,12 +128,12 @@ export default function LandingPage() {
           <h1 className="mb-6 text-4xl font-extrabold leading-tight tracking-tight text-white sm:text-6xl">
             อุปกรณ์ตรวจจับและควบคุมการไหลของน้ำ <br className="hidden sm:block" />
             <span className="bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-500 bg-clip-text text-transparent">
-              IoT Water Guard (รุ่น PVC ฟ้า 3/4 นิ้ว)
+              IoT Water Guard (รุ่น PVC ฟ้า1/2 และ 3/4 นิ้ว)
             </span>
           </h1>
           <p className="mx-auto mb-8 max-w-2xl text-base text-slate-400 sm:text-lg">
-            ควบคุม บอลวาล์วทองเหลืองขับเคลื่อนด้วยมอเตอร์ พร้อมเซนเซอร์วัดการไหล
-            FS300A และบอร์ด ESP32 แจ้งเตือนสถานะผ่าน LINE Alert ได้ทันที
+            ควบคุม บอลวาล์วทองเหลืองขับเคลื่อนด้วยมอเตอร์ พร้อมเซนเซอร์การไหลของน้ำ
+            และบอร์ด ESP32 แจ้งเตือนสถานะผ่าน LINE Alert ได้ทันที
           </p>
           <div className="flex flex-col justify-center gap-4 sm:flex-row">
             <Link
@@ -170,7 +169,7 @@ export default function LandingPage() {
               filename="installation.jpg"
               alt="การติดตั้ง IoT Water Guard หน้างานจริง"
               badge="LIVE INSTALLATION"
-              title="ติดตั้งเข้ากับระบบท่อน้ำหลัก (DN25 / 3/4 นิ้ว)"
+              title="ติดตั้งเข้ากับระบบท่อน้ำหลัก"
               description="รองรับการวัดแรงดันน้ำเข้าจากริมถนน ตัดการทำงานและแจ้งเตือนเข้าก๊อกน้ำภายในบ้านอัตโนมัติเมื่อพบการรั่วไหล"
             />
             <HardwareCard

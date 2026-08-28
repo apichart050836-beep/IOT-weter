@@ -14,6 +14,8 @@ function toDevice(row: Record<string, unknown>): Device {
     valveOpen: (row.valve_open as boolean) ?? true,
     targetFlowPercent: (row.target_flow_percent as number) ?? 100,
     commandUpdatedAt: (row.command_updated_at as string) ?? null,
+    ownerId: (row.owner_id as string) ?? null,
+    pipeSize: (row.pipe_size as Device["pipeSize"]) ?? '3/4"',
   };
 }
 
@@ -120,6 +122,8 @@ export function subscribeWaterRate(callback: (settings: WaterRateSettings) => vo
     return {
       pricePerCubicMeter: (row?.price_per_cubic_meter as number) ?? 18.0,
       billingCutoffDay: (row?.billing_cutoff_day as number) ?? 1,
+      serviceFee: (row?.service_fee as number) ?? 30,
+      serviceFeeHalfInch: (row?.service_fee_half_inch as number) ?? 30,
       updatedAt: (row?.updated_at as string) ?? null,
     };
   }

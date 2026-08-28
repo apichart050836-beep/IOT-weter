@@ -1,3 +1,5 @@
+export type PipeSize = '1/2"' | '3/4"';
+
 export interface Device {
   id: string;
   name: string;
@@ -11,6 +13,8 @@ export interface Device {
   valveOpen: boolean;
   targetFlowPercent: number;
   commandUpdatedAt: string | null;
+  ownerId: string | null;
+  pipeSize: PipeSize; // ขนาดท่อ — มีผลกับค่าบริการทั่วไปที่ใช้คำนวณบิล
 }
 
 export interface Reading {
@@ -25,6 +29,8 @@ export interface Reading {
 export interface WaterRateSettings {
   pricePerCubicMeter: number;
   billingCutoffDay: number; // วันที่ตัดรอบบิลของทุกเดือน (1-28)
+  serviceFee: number; // ค่าบริการทั่วไปรายเดือน สำหรับท่อ 3/4" (บาท)
+  serviceFeeHalfInch: number; // ค่าบริการทั่วไปรายเดือน สำหรับท่อ 1/2" (บาท)
   updatedAt: string | null;
 }
 

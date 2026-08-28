@@ -11,7 +11,7 @@ import {
   Filler,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import { isSupabaseConfigured } from "@/lib/supabase/client";
 import {
   getPrimaryDeviceId,
   subscribeLatestReadings,
@@ -31,7 +31,7 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 
 const BASE_FLOW_LPM = 25.0;
 const DAYS_IN_PERIOD = 15;
-const SERVICE_FEE = 25.0;
+const DEFAULT_SERVICE_FEE = 30;
 const VAT_RATE = 0.07;
 const VALVE_DELAY_MS = 5000;
 const CHART_LABELS = ["60s", "50s", "40s", "30s", "20s", "10s", "5s", "Now"];
@@ -55,7 +55,7 @@ interface BillResult {
   dailyAvg: number;
 }
 
-function calculateWaterBill(volume: number, tiers: RateTier[]): BillResult {
+function calculateWaterBill(volume: number, tiers: RateTier[], serviceFee: number): BillResult {
   let remaining = volume;
   let waterCost = 0;
   const tierUsages = tiers.map(() => 0);
@@ -71,15 +71,15 @@ function calculateWaterBill(volume: number, tiers: RateTier[]): BillResult {
     }
   });
 
-  const vat = (waterCost + SERVICE_FEE) * VAT_RATE;
-  const grandTotal = waterCost + SERVICE_FEE + vat;
+  const vat = (waterCost + serviceFee) * VAT_RATE;
+  const grandTotal = waterCost + serviceFee + vat;
 
   return {
     volume,
     tierUsages,
     tierCosts,
     waterCost,
-    serviceFee: SERVICE_FEE,
+    serviceFee,
     vat,
     grandTotal,
     dailyAvg: grandTotal / DAYS_IN_PERIOD,
@@ -87,99 +87,6 @@ function calculateWaterBill(volume: number, tiers: RateTier[]): BillResult {
 }
 
 type Toast = { message: string; tone: "success" | "error" };
-
-function LinkDeviceModal({
-  keyDraft,
-  setKeyDraft,
-  nameDraft,
-  setNameDraft,
-  locationDraft,
-  setLocationDraft,
-  loading,
-  onClose,
-  onSubmit,
-}: {
-  keyDraft: string;
-  setKeyDraft: (v: string) => void;
-  nameDraft: string;
-  setNameDraft: (v: string) => void;
-  locationDraft: string;
-  setLocationDraft: (v: string) => void;
-  loading: boolean;
-  onClose: () => void;
-  onSubmit: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-left shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <h3 className="flex items-center gap-2 font-bold text-cyan-400">
-            <i className="fa-solid fa-microchip text-xl" /> ผูกอุปกรณ์ ESP
-          </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
-            <i className="fa-solid fa-xmark text-lg" />
-          </button>
-        </div>
-
-        <p className="text-xs text-slate-400">
-          กรอกรหัสลับ (device key) ที่ตั้งไว้ในเฟิร์มแวร์ ESP32 — ไม่ใช่ device_key_hash ระบบจะคำนวณ
-          hash ให้เองฝั่งเซิร์ฟเวอร์ ถ้ายังไม่เคยลงทะเบียนอุปกรณ์นี้มาก่อน ระบบจะสร้างให้ใหม่และผูกกับบัญชีนี้ทันที
-        </p>
-
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-300">
-              รหัสลับอุปกรณ์ (device key) *
-            </label>
-            <input
-              type="text"
-              value={keyDraft}
-              onChange={(e) => setKeyDraft(e.target.value)}
-              placeholder="เช่น YOUR_SECRET_KEY"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-300">ชื่ออุปกรณ์ (ถ้ามี)</label>
-            <input
-              type="text"
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-              placeholder="เช่น มิเตอร์น้ำหลัก"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-300">ตำแหน่งติดตั้ง (ถ้ามี)</label>
-            <input
-              type="text"
-              value={locationDraft}
-              onChange={(e) => setLocationDraft(e.target.value)}
-              placeholder="เช่น หน้าบ้าน"
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
-            />
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            onClick={onClose}
-            className="rounded-xl bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700"
-          >
-            ยกเลิก
-          </button>
-          <button
-            onClick={onSubmit}
-            disabled={loading}
-            className="rounded-xl bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
-          >
-            {loading ? "กำลังผูก..." : "ผูกอุปกรณ์"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function DashboardPage() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -207,14 +114,10 @@ export default function DashboardPage() {
   const [rateTiers, setRateTiers] = useState<RateTier[]>(DEFAULT_TIERS);
   const [deviceInfo, setDeviceInfo] = useState<Device | null>(null);
   const [billingCutoffDay, setBillingCutoffDayState] = useState(1);
+  const [serviceFee, setServiceFee] = useState(DEFAULT_SERVICE_FEE);
+  const [serviceFeeHalfInch, setServiceFeeHalfInch] = useState(DEFAULT_SERVICE_FEE);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [cutoffDayDraft, setCutoffDayDraft] = useState("1");
-
-  const [linkModalOpen, setLinkModalOpen] = useState(false);
-  const [linkKeyDraft, setLinkKeyDraft] = useState("");
-  const [linkNameDraft, setLinkNameDraft] = useState("");
-  const [linkLocationDraft, setLinkLocationDraft] = useState("");
-  const [linkLoading, setLinkLoading] = useState(false);
 
   const { signOut } = useSession();
 
@@ -274,6 +177,8 @@ export default function DashboardPage() {
     return subscribeWaterRate((settings) => {
       setBillingCutoffDayState(settings.billingCutoffDay);
       setCutoffDayDraft(String(settings.billingCutoffDay));
+      setServiceFee(settings.serviceFee);
+      setServiceFeeHalfInch(settings.serviceFeeHalfInch);
     });
   }, []);
 
@@ -301,9 +206,10 @@ export default function DashboardPage() {
 
   const volumeForBilling =
     isSupabaseConfigured && dbVolumeThisMonthLiters !== null ? dbVolumeThisMonthLiters / 1000 : volume;
+  const effectiveServiceFee = deviceInfo?.pipeSize === '1/2"' ? serviceFeeHalfInch : serviceFee;
   const billing = useMemo(
-    () => calculateWaterBill(volumeForBilling, rateTiers),
-    [volumeForBilling, rateTiers]
+    () => calculateWaterBill(volumeForBilling, rateTiers, effectiveServiceFee),
+    [volumeForBilling, rateTiers, effectiveServiceFee]
   );
 
   useEffect(() => {
@@ -416,50 +322,6 @@ export default function DashboardPage() {
     }
   }
 
-  async function handleLinkDevice() {
-    if (!isSupabaseConfigured) {
-      showToast("ต้องตั้งค่า Supabase ก่อนถึงจะผูกอุปกรณ์ได้", "error");
-      return;
-    }
-    if (!linkKeyDraft.trim()) {
-      showToast("กรอกรหัสลับของอุปกรณ์ก่อน", "error");
-      return;
-    }
-    setLinkLoading(true);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData.session?.access_token;
-      if (!accessToken) throw new Error("no session");
-
-      const res = await fetch("/api/devices/link", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          deviceKey: linkKeyDraft.trim(),
-          name: linkNameDraft.trim() || undefined,
-          location: linkLocationDraft.trim() || undefined,
-        }),
-      });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || "link failed");
-
-      showToast(result.created ? "ลงทะเบียนอุปกรณ์ใหม่และผูกกับบัญชีนี้แล้ว" : "ผูกอุปกรณ์กับบัญชีนี้แล้ว", "success");
-      setLinkModalOpen(false);
-      setLinkKeyDraft("");
-      setLinkNameDraft("");
-      setLinkLocationDraft("");
-      setDeviceId(result.deviceId);
-      setDeviceLookupDone(true);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "ผูกอุปกรณ์ไม่สำเร็จ", "error");
-    } finally {
-      setLinkLoading(false);
-    }
-  }
-
   const statusLog = pending
     ? {
         message: `[WAIT] กำลังดำเนินการ ${masterChecked ? "เปิด" : "ปิด"} วาล์วหลักใน ${countdown} วินาที...`,
@@ -541,29 +403,8 @@ export default function DashboardPage() {
         <i className="fa-solid fa-droplet text-3xl text-cyan-500" />
         <h1 className="text-lg font-bold">ยังไม่มีอุปกรณ์ผูกกับบัญชีนี้</h1>
         <p className="max-w-sm text-sm text-slate-400">
-          ถ้ามีอุปกรณ์ ESP32 อยู่แล้ว กรอกรหัสลับของอุปกรณ์เพื่อผูกกับบัญชีนี้ได้เลย
-          หรือถ้ายังไม่มีอุปกรณ์ ติดต่อผู้ดูแลระบบ
+          กรุณาติดต่อผู้ดูแลระบบเพื่อผูกอุปกรณ์ ESP32 เข้ากับบัญชีนี้
         </p>
-        <button
-          onClick={() => setLinkModalOpen(true)}
-          className="mt-2 flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
-        >
-          <i className="fa-solid fa-microchip" />
-          ผูกอุปกรณ์ ESP
-        </button>
-        {linkModalOpen && (
-          <LinkDeviceModal
-            keyDraft={linkKeyDraft}
-            setKeyDraft={setLinkKeyDraft}
-            nameDraft={linkNameDraft}
-            setNameDraft={setLinkNameDraft}
-            locationDraft={linkLocationDraft}
-            setLocationDraft={setLinkLocationDraft}
-            loading={linkLoading}
-            onClose={() => setLinkModalOpen(false)}
-            onSubmit={handleLinkDevice}
-          />
-        )}
       </div>
     );
   }
@@ -593,12 +434,29 @@ export default function DashboardPage() {
                     <i className="fa-solid fa-location-dot mr-1" />
                     {deviceInfo.name}
                     {deviceInfo.location ? ` • ${deviceInfo.location}` : ""}
+                    {` • ท่อ ${deviceInfo.pipeSize}`}
                   </p>
                 )}
               </div>
             </div>
 
             <div className="flex items-center gap-3 text-xs">
+              <button
+                onClick={() => {
+                  setCutoffDayDraft(String(billingCutoffDay));
+                  setSettingsModalOpen(true);
+                }}
+                title="ตั้งค่าวันตัดรอบบิล"
+                className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-200 px-3 py-2 text-slate-700 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                <i className="fa-solid fa-file-invoice text-base" />
+                <span className="hidden sm:inline">ตั้งค่ารอบบิล</span>
+              </button>
+
+              <div className="rounded-xl border border-slate-300 bg-slate-200 px-3 py-1.5 font-[family-name:var(--font-orbitron)] text-slate-700 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300">
+                {clock}
+              </div>
+
               <button
                 onClick={openLineModal}
                 title="ตั้งค่า LINE Notify"
@@ -613,46 +471,6 @@ export default function DashboardPage() {
               >
                 <i className={`fa-solid ${theme === "dark" ? "fa-moon" : "fa-sun"} text-base`} />
               </button>
-
-              <button
-                onClick={() => {
-                  setCutoffDayDraft(String(billingCutoffDay));
-                  setSettingsModalOpen(true);
-                }}
-                title="ตั้งค่าวันตัดรอบบิล"
-                className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-200 px-3 py-2 text-slate-700 transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-              >
-                <i className="fa-solid fa-file-invoice text-base" />
-                <span className="hidden sm:inline">ตั้งค่ารอบบิล</span>
-              </button>
-
-              <button
-                onClick={() => setLinkModalOpen(true)}
-                title="ผูกอุปกรณ์ ESP"
-                className="flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-cyan-600 transition dark:text-cyan-400"
-              >
-                <i className="fa-solid fa-microchip text-base" />
-                <span className="hidden sm:inline">ผูกอุปกรณ์ ESP</span>
-              </button>
-
-              <div
-                className={`hidden items-center gap-2 rounded-full border px-3 py-1.5 sm:flex ${
-                  hasDbReadings
-                    ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400"
-                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                }`}
-              >
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    hasDbReadings ? "animate-pulse bg-cyan-500" : "animate-ping bg-emerald-500"
-                  }`}
-                />
-                <span>{hasDbReadings ? "ข้อมูลจริงจาก Supabase" : "Online"}</span>
-              </div>
-
-              <div className="rounded-xl border border-slate-300 bg-slate-200 px-3 py-1.5 font-[family-name:var(--font-orbitron)] text-slate-700 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300">
-                {clock}
-              </div>
 
               <button
                 onClick={signOut}
@@ -687,13 +505,6 @@ export default function DashboardPage() {
                     ตรวจพบการไหลต่ำกว่าเกณฑ์ 1 L/min ขณะเปิดวาล์วหลัก
                   </p>
                 </div>
-                <button
-                  onClick={() => sendLineAlert("แรงดันน้ำประปาต่ำ / น้ำไม่ไหล")}
-                  className="rounded bg-red-500 px-2 py-1 text-xs text-white transition hover:bg-red-600"
-                >
-                  <i className="fa-brands fa-line mr-1" />
-                  ส่งแจ้งเตือน
-                </button>
               </div>
 
               <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
@@ -708,13 +519,6 @@ export default function DashboardPage() {
                     ตรวจพบอัตราการไหลต่อเนื่อง 45 L/min นานเกิน 15 นาที
                   </p>
                 </div>
-                <button
-                  onClick={() => sendLineAlert("อัตราการไหลสูงผิดปกติ (เฝ้าระวังน้ำรั่ว)")}
-                  className="rounded bg-amber-500 px-2 py-1 text-xs text-white transition hover:bg-amber-600"
-                >
-                  <i className="fa-brands fa-line mr-1" />
-                  ส่งแจ้งเตือน
-                </button>
               </div>
             </div>
           </div>
@@ -728,24 +532,34 @@ export default function DashboardPage() {
                   <span className="flex items-center gap-2 font-bold text-cyan-600 dark:text-cyan-300">
                     <i className="fa-solid fa-gauge-high" /> Digital Gauge
                   </span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">
-                    อัตราการไหลปัจจุบัน (Current Flow Rate)
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="hidden text-xs text-slate-500 sm:inline dark:text-slate-400">
+                      อัตราการไหลปัจจุบัน (Current Flow Rate)
+                    </span>
+                    <div className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                      <span className="h-2 w-2 animate-ping rounded-full bg-emerald-500" />
+                      <span>Online</span>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="p-6">
                   <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-12">
                     <div className="card-sub-bg flex flex-col items-center justify-center rounded-2xl p-4 md:col-span-7">
                       <span className="mb-1 text-xs text-slate-500 dark:text-slate-400">
-                        อัตราการไหล (Flow Rate)
+                        ปริมาณน้ำสะสม (จากวันตัดรอบบิล)
                       </span>
                       <div className="flex items-baseline gap-2">
                         <span className="font-[family-name:var(--font-orbitron)] text-5xl font-extrabold text-cyan-500 dark:text-cyan-400">
-                          {displayFlow.toFixed(1)}
+                          {billing.volume.toFixed(2)}
                         </span>
-                        <span className="font-medium text-slate-600 dark:text-slate-300">L/min</span>
+                        <span className="font-medium text-slate-600 dark:text-slate-300">ลบ.ม. (m³)</span>
                       </div>
-                      <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-300 dark:bg-slate-800">
+                      <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                        <i className="fa-solid fa-gauge-high text-cyan-500" />
+                        อัตราการไหลขณะนี้ {displayFlow.toFixed(1)} L/min
+                      </div>
+                      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-300 dark:bg-slate-800">
                         <div
                           className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-500"
                           style={{ width: `${percentage}%` }}
@@ -1259,21 +1073,6 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
-        )}
-
-        {/* LINK DEVICE MODAL */}
-        {linkModalOpen && (
-          <LinkDeviceModal
-            keyDraft={linkKeyDraft}
-            setKeyDraft={setLinkKeyDraft}
-            nameDraft={linkNameDraft}
-            setNameDraft={setLinkNameDraft}
-            locationDraft={linkLocationDraft}
-            setLocationDraft={setLinkLocationDraft}
-            loading={linkLoading}
-            onClose={() => setLinkModalOpen(false)}
-            onSubmit={handleLinkDevice}
-          />
         )}
 
         {/* TOAST */}

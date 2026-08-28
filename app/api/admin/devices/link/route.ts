@@ -1,21 +1,32 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { isAdminEmail } from "@/lib/adminAuth";
 
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
 }
 
+type PipeSize = '1/2"' | '3/4"';
+
 interface LinkPayload {
+  userId: string;
   deviceKey: string;
   name?: string;
   location?: string;
+  pipeSize?: PipeSize;
 }
 
 function isValidPayload(body: unknown): body is LinkPayload {
   if (typeof body !== "object" || body === null) return false;
   const b = body as Record<string, unknown>;
-  return typeof b.deviceKey === "string" && b.deviceKey.trim().length > 0;
+  if (b.pipeSize !== undefined && b.pipeSize !== '1/2"' && b.pipeSize !== '3/4"') return false;
+  return (
+    typeof b.userId === "string" &&
+    b.userId.trim().length > 0 &&
+    typeof b.deviceKey === "string" &&
+    b.deviceKey.trim().length > 0
+  );
 }
 
 export async function POST(request: Request) {
@@ -36,13 +47,12 @@ export async function POST(request: Request) {
 
   const supabase = getSupabaseAdmin();
 
-  const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
-  if (userError || !userData.user) {
-    return NextResponse.json({ error: "Invalid or expired session" }, { status: 401 });
+  const { data: callerData, error: callerError } = await supabase.auth.getUser(accessToken);
+  if (callerError || !callerData.user || !isAdminEmail(callerData.user.email)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const userId = userData.user.id;
 
-  const { deviceKey, name, location } = body;
+  const { userId, deviceKey, name, location, pipeSize } = body;
   const keyHash = hashKey(deviceKey.trim());
 
   const { data: existing, error: findError } = await supabase
@@ -65,6 +75,7 @@ export async function POST(request: Request) {
         owner_id: userId,
         ...(name ? { name } : {}),
         ...(location ? { location } : {}),
+        ...(pipeSize ? { pipe_size: pipeSize } : {}),
       })
       .eq("id", existing.id);
     if (updateError) {
@@ -80,6 +91,7 @@ export async function POST(request: Request) {
       owner_id: userId,
       name: name || "มิเตอร์น้ำหลัก",
       location: location || null,
+      pipe_size: pipeSize || '3/4"',
     })
     .select("id")
     .single();
