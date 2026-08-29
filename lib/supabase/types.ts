@@ -51,3 +51,10 @@ export interface DailyVolume {
   date: string; // YYYY-MM-DD ตามเวลาเครื่อง (local)
   totalLiters: number;
 }
+
+export interface LineStatus {
+  lineUserId: string | null;
+  lineDisplayName: string | null;
+  notifyNoFlow: boolean;
+  notifyLongFlow: boolean;
+}

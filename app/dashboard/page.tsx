@@ -11,7 +11,7 @@ import {
   Filler,
 } from "chart.js";
 import { Line } from "react-chartjs-2";
-import { isSupabaseConfigured } from "@/lib/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
   getPrimaryDeviceId,
   subscribeLatestReadings,
@@ -24,69 +24,18 @@ import {
   getRateTiers,
   subscribeWaterRate,
   setBillingCutoffDay,
+  getLineStatus,
 } from "@/lib/supabase/queries";
 import { billingPeriodStart, now as dateNow } from "@/lib/dateRanges";
-import type { Reading, RateTier, Device, PipeSize, DailyVolume } from "@/lib/supabase/types";
+import { calculateWaterBill, DEFAULT_TIERS, DEFAULT_SERVICE_FEE, DAYS_IN_PERIOD } from "@/lib/billing";
+import type { Reading, RateTier, Device, PipeSize, DailyVolume, LineStatus } from "@/lib/supabase/types";
 import { useSession } from "@/lib/useSession";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
 
 const BASE_FLOW_LPM = 25.0;
-const DAYS_IN_PERIOD = 15;
-const DEFAULT_SERVICE_FEE = 30;
-const VAT_RATE = 0.07;
 const VALVE_DELAY_MS = 5000;
 const CHART_LABELS = ["60s", "50s", "40s", "30s", "20s", "10s", "5s", "Now"];
-
-// ใช้เป็นค่าเริ่มต้นก่อนโหลดจาก Supabase เสร็จ (หรือตอนยังไม่ได้ตั้งค่า Supabase)
-const DEFAULT_TIERS: RateTier[] = [
-  { tierOrder: 1, label: "0 - 10 ลบ.ม. (ขั้นต้น)", unitLimit: 10, ratePerUnit: 10.2 },
-  { tierOrder: 2, label: "11 - 20 ลบ.ม.", unitLimit: 10, ratePerUnit: 16.0 },
-  { tierOrder: 3, label: "21 - 30 ลบ.ม.", unitLimit: 10, ratePerUnit: 19.0 },
-  { tierOrder: 4, label: "31 ลบ.ม. ขึ้นไป", unitLimit: null, ratePerUnit: 21.2 },
-];
-
-interface BillResult {
-  volume: number;
-  tierUsages: number[];
-  tierCosts: number[];
-  waterCost: number;
-  serviceFee: number;
-  vat: number;
-  grandTotal: number;
-  dailyAvg: number;
-}
-
-function calculateWaterBill(volume: number, tiers: RateTier[], serviceFee: number): BillResult {
-  let remaining = volume;
-  let waterCost = 0;
-  const tierUsages = tiers.map(() => 0);
-  const tierCosts = tiers.map(() => 0);
-
-  tiers.forEach((tier, i) => {
-    if (remaining > 0) {
-      const take = Math.min(remaining, tier.unitLimit ?? Infinity);
-      tierUsages[i] = take;
-      tierCosts[i] = take * tier.ratePerUnit;
-      waterCost += tierCosts[i];
-      remaining -= take;
-    }
-  });
-
-  const vat = (waterCost + serviceFee) * VAT_RATE;
-  const grandTotal = waterCost + serviceFee + vat;
-
-  return {
-    volume,
-    tierUsages,
-    tierCosts,
-    waterCost,
-    serviceFee,
-    vat,
-    grandTotal,
-    dailyAvg: grandTotal / DAYS_IN_PERIOD,
-  };
-}
 
 type Toast = { message: string; tone: "success" | "error" };
 
@@ -103,9 +52,9 @@ export default function DashboardPage() {
   const [chartData, setChartData] = useState<number[]>([12, 19, 15, 17, 14, 18.5, 20, 25.0]);
   const [volume, setVolume] = useState(25.4);
 
-  const [lineToken, setLineToken] = useState("");
   const [lineModalOpen, setLineModalOpen] = useState(false);
-  const [lineTokenDraft, setLineTokenDraft] = useState("");
+  const [lineStatus, setLineStatus] = useState<LineStatus | null>(null);
+  const [lineConnecting, setLineConnecting] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
   // ข้อมูลจริงจาก Supabase (ใช้เมื่อ isSupabaseConfigured เท่านั้น) — ไม่งั้น fallback ไปโหมดจำลองทั้งหมด
@@ -128,11 +77,59 @@ export default function DashboardPage() {
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flowCommandTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (localStorage.getItem("theme") === "light") setTheme("light");
-    setLineToken(localStorage.getItem("line_token") ?? "");
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    async function loadLineStatus() {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id;
+      if (!userId) return;
+      setLineStatus(await getLineStatus(userId));
+    }
+    loadLineStatus();
+  }, []);
+
+  // รับ redirect กลับจาก LINE Login (?code=...&state=...) แล้วผูกบัญชี LINE กับผู้ใช้ที่ login อยู่
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const state = params.get("state");
+    if (!code) return;
+
+    const expectedState = sessionStorage.getItem("line_login_state");
+    window.history.replaceState(null, "", window.location.pathname);
+    if (!state || state !== expectedState) return;
+    sessionStorage.removeItem("line_login_state");
+
+    (async () => {
+      setLineConnecting(true);
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData.session?.access_token;
+        const userId = sessionData.session?.user.id;
+        if (!accessToken || !userId) throw new Error("no session");
+
+        const res = await fetch("/api/line/link", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({ code, redirectUri: `${window.location.origin}/dashboard` }),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || "link failed");
+
+        showToast(`เชื่อมต่อ LINE สำเร็จ (${result.displayName})`, "success");
+        setLineStatus(await getLineStatus(userId));
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "เชื่อมต่อ LINE ไม่สำเร็จ", "error");
+      } finally {
+        setLineConnecting(false);
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -193,7 +190,7 @@ export default function DashboardPage() {
     async function load() {
       const [periodTotal, dailyTotals] = await Promise.all([
         getVolumeSum(deviceId as string, billingPeriodStart(billingCutoffDay), dateNow()),
-        getDailyVolumeTotals(deviceId as string, 7),
+        getDailyVolumeTotals(deviceId as string, dateNow().getDate()),
       ]);
       if (!cancelled) {
         setDbVolumeThisMonthLiters(periodTotal);
@@ -247,7 +244,6 @@ export default function DashboardPage() {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-      if (flowCommandTimeoutRef.current) clearTimeout(flowCommandTimeoutRef.current);
     };
   }, []);
 
@@ -288,38 +284,43 @@ export default function DashboardPage() {
     }, VALVE_DELAY_MS);
   }
 
-  function handleFlowPercentChange(value: number) {
-    setFlowPercent(value);
-    if (!isSupabaseConfigured || !deviceId) return;
-    if (flowCommandTimeoutRef.current) clearTimeout(flowCommandTimeoutRef.current);
-    flowCommandTimeoutRef.current = setTimeout(() => {
-      setDeviceCommand(deviceId, { targetFlowPercent: value }).catch(() =>
-        showToast("บันทึกค่าที่ปรับไม่สำเร็จ", "error")
-      );
-    }, 400);
-  }
-
-  function sendLineAlert(message: string) {
-    if (!lineToken) {
-      showToast("กรุณาตั้งค่า LINE Token ก่อนใช้งาน", "error");
-      setLineTokenDraft(lineToken);
-      setLineModalOpen(true);
+  function connectLine() {
+    const channelId = process.env.NEXT_PUBLIC_LINE_LOGIN_CHANNEL_ID;
+    if (!channelId) {
+      showToast("ยังไม่ได้ตั้งค่า LINE Login บนระบบ", "error");
       return;
     }
-    showToast(`ส่งข้อความไปยัง LINE แล้ว: "${message}"`, "success");
+    const state = crypto.randomUUID();
+    sessionStorage.setItem("line_login_state", state);
+    const url = new URL("https://access.line.me/oauth2/v2.1/authorize");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("client_id", channelId);
+    url.searchParams.set("redirect_uri", `${window.location.origin}/dashboard`);
+    url.searchParams.set("state", state);
+    url.searchParams.set("scope", "profile openid");
+    url.searchParams.set("bot_prompt", "aggressive");
+    window.location.href = url.toString();
   }
 
-  function openLineModal() {
-    setLineTokenDraft(lineToken);
-    setLineModalOpen(true);
-  }
-
-  function saveLineToken() {
-    const trimmed = lineTokenDraft.trim();
-    localStorage.setItem("line_token", trimmed);
-    setLineToken(trimmed);
-    showToast("บันทึก LINE Token เรียบร้อยแล้ว!", "success");
-    setLineModalOpen(false);
+  async function toggleNotifyPref(key: "notifyNoFlow" | "notifyLongFlow", value: boolean) {
+    if (!lineStatus) return;
+    const previous = lineStatus;
+    setLineStatus({ ...lineStatus, [key]: value });
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("no session");
+      const res = await fetch("/api/line/preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify(key === "notifyNoFlow" ? { notifyNoFlow: value } : { notifyLongFlow: value }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "update failed");
+    } catch (err) {
+      setLineStatus(previous);
+      showToast(err instanceof Error ? err.message : "บันทึกการตั้งค่าไม่สำเร็จ", "error");
+    }
   }
 
   async function saveBillingCutoffDay() {
@@ -484,7 +485,7 @@ export default function DashboardPage() {
               </div>
 
               <button
-                onClick={openLineModal}
+                onClick={() => setLineModalOpen(true)}
                 title="ตั้งค่า LINE Notify"
                 className="flex items-center justify-center rounded-xl bg-emerald-500 p-2 text-white shadow-sm transition hover:bg-emerald-600"
               >
@@ -790,24 +791,6 @@ export default function DashboardPage() {
                       </label>
                     </div>
 
-                    <div className="card-sub-bg space-y-2 rounded-xl border border-slate-200 p-3.5 dark:border-slate-800">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-medium text-slate-700 dark:text-slate-300">
-                          ปรับระดับการไหล (Flow Rate Control)
-                        </span>
-                        <span className="font-[family-name:var(--font-orbitron)] font-bold text-cyan-600 dark:text-cyan-400">
-                          {flowPercent}% Flow
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={flowPercent}
-                        onChange={(e) => handleFlowPercentChange(Number(e.target.value))}
-                        className="h-2 w-full cursor-pointer appearance-none rounded-lg border border-slate-300 bg-slate-300 accent-cyan-500 dark:border-slate-700 dark:bg-slate-800"
-                      />
-                    </div>
                   </div>
                 </div>
               </div>
@@ -983,7 +966,7 @@ export default function DashboardPage() {
             <div className="glass-panel w-full max-w-md space-y-4 rounded-2xl p-6">
               <div className="flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-800">
                 <h3 className="flex items-center gap-2 font-bold text-emerald-600 dark:text-emerald-400">
-                  <i className="fa-brands fa-line text-xl" /> ตั้งค่า LINE Notification Token
+                  <i className="fa-brands fa-line text-xl" /> การแจ้งเตือนผ่าน LINE
                 </h3>
                 <button
                   onClick={() => setLineModalOpen(false)}
@@ -993,41 +976,54 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                ระบุ LINE Notify Token หรือ LINE Messaging API Channel Access Token
-                เพื่อเปิดรับการแจ้งเตือนเมื่อเกิดเหตุน้ำรั่วหรือแรงดันตก
-              </p>
+              {lineStatus?.lineUserId ? (
+                <>
+                  <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                    <i className="fa-solid fa-circle-check" />
+                    เชื่อมต่อ LINE แล้ว{lineStatus.lineDisplayName ? ` (${lineStatus.lineDisplayName})` : ""}
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    เลือกรับแจ้งเตือนแบบ push message ทาง LINE ได้เลย —
+                    หรือพิมพ์คุยกับ LINE OA เพื่อดูใช้น้ำวันนี้/เดือนนี้/บิลปัจจุบัน
+                  </p>
 
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  LINE Token Key
-                </label>
-                <input
-                  type="password"
-                  value={lineTokenDraft}
-                  onChange={(e) => setLineTokenDraft(e.target.value)}
-                  placeholder="ใส่ Token ของคุณที่นี่..."
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  onClick={() =>
-                    sendLineAlert("ทดสอบการเชื่อมต่อระบบ IoT Water Flow Monitoring")
-                  }
-                  className="rounded-xl bg-slate-200 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                >
-                  <i className="fa-solid fa-paper-plane mr-1" />
-                  ทดสอบส่ง
-                </button>
-                <button
-                  onClick={saveLineToken}
-                  className="rounded-xl bg-emerald-500 px-4 py-1.5 text-xs text-white hover:bg-emerald-600"
-                >
-                  บันทึก Token
-                </button>
-              </div>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={lineStatus.notifyNoFlow}
+                        onChange={(e) => toggleNotifyPref("notifyNoFlow", e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-0 dark:border-slate-700"
+                      />
+                      แจ้งเตือนน้ำไม่ไหล
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={lineStatus.notifyLongFlow}
+                        onChange={(e) => toggleNotifyPref("notifyLongFlow", e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-0 dark:border-slate-700"
+                      />
+                      แจ้งเตือนน้ำไหลนานเกิน 1 ชม. (เฝ้าระวังน้ำรั่ว)
+                    </label>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    เชื่อมต่อบัญชี LINE ของคุณเพื่อรับแจ้งเตือนแบบ push message
+                    และพิมพ์คุยกับ LINE OA เพื่อดูใช้น้ำวันนี้/เดือนนี้/บิลปัจจุบันได้ทันที
+                  </p>
+                  <button
+                    onClick={connectLine}
+                    disabled={lineConnecting}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-60"
+                  >
+                    <i className="fa-brands fa-line text-lg" />
+                    {lineConnecting ? "กำลังเชื่อมต่อ..." : "เชื่อมต่อบัญชี LINE"}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}

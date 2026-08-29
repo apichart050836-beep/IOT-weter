@@ -1,5 +1,5 @@
 import { supabase } from "./client";
-import type { Device, Reading, WaterRateSettings, RateTier, Profile, DailyVolume } from "./types";
+import type { Device, Reading, WaterRateSettings, RateTier, Profile, DailyVolume, LineStatus } from "./types";
 
 function toDevice(row: Record<string, unknown>): Device {
   return {
@@ -237,4 +237,20 @@ export async function getProfiles(): Promise<Profile[]> {
     email: row.email as string,
     createdAt: row.created_at as string,
   }));
+}
+
+export async function getLineStatus(userId: string): Promise<LineStatus | null> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("line_user_id, line_display_name, notify_no_flow, notify_long_flow")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!data) return null;
+  return {
+    lineUserId: (data.line_user_id as string) ?? null,
+    lineDisplayName: (data.line_display_name as string) ?? null,
+    notifyNoFlow: (data.notify_no_flow as boolean) ?? false,
+    notifyLongFlow: (data.notify_long_flow as boolean) ?? false,
+  };
 }
