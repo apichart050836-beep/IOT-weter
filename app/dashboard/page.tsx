@@ -18,14 +18,15 @@ import {
   subscribeDevice,
   subscribeReadingsChanged,
   getVolumeSum,
+  getDailyVolumeTotals,
   getDevice,
   setDeviceCommand,
   getRateTiers,
   subscribeWaterRate,
   setBillingCutoffDay,
 } from "@/lib/supabase/queries";
-import { billingPeriodStart, startOfDay, now as dateNow } from "@/lib/dateRanges";
-import type { Reading, RateTier, Device, PipeSize } from "@/lib/supabase/types";
+import { billingPeriodStart, now as dateNow } from "@/lib/dateRanges";
+import type { Reading, RateTier, Device, PipeSize, DailyVolume } from "@/lib/supabase/types";
 import { useSession } from "@/lib/useSession";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
@@ -112,7 +113,7 @@ export default function DashboardPage() {
   const [deviceLookupDone, setDeviceLookupDone] = useState(false);
   const [dbReadings, setDbReadings] = useState<Reading[]>([]);
   const [dbVolumeThisMonthLiters, setDbVolumeThisMonthLiters] = useState<number | null>(null);
-  const [dbVolumeTodayLiters, setDbVolumeTodayLiters] = useState<number | null>(null);
+  const [dailyVolumeTotals, setDailyVolumeTotals] = useState<DailyVolume[]>([]);
   const [rateTiers, setRateTiers] = useState<RateTier[]>(DEFAULT_TIERS);
   const [deviceInfo, setDeviceInfo] = useState<Device | null>(null);
   const [billingPipeSize, setBillingPipeSize] = useState<PipeSize>('3/4"');
@@ -190,13 +191,13 @@ export default function DashboardPage() {
     if (!isSupabaseConfigured || !deviceId) return;
     let cancelled = false;
     async function load() {
-      const [periodTotal, todayTotal] = await Promise.all([
+      const [periodTotal, dailyTotals] = await Promise.all([
         getVolumeSum(deviceId as string, billingPeriodStart(billingCutoffDay), dateNow()),
-        getVolumeSum(deviceId as string, startOfDay(), dateNow()),
+        getDailyVolumeTotals(deviceId as string, 7),
       ]);
       if (!cancelled) {
         setDbVolumeThisMonthLiters(periodTotal);
-        setDbVolumeTodayLiters(todayTotal);
+        setDailyVolumeTotals(dailyTotals);
       }
     }
     load();
@@ -218,7 +219,8 @@ export default function DashboardPage() {
 
   const volumeForBilling =
     isSupabaseConfigured && dbVolumeThisMonthLiters !== null ? dbVolumeThisMonthLiters / 1000 : volume;
-  const volumeTodayLiters = isSupabaseConfigured && dbVolumeTodayLiters !== null ? dbVolumeTodayLiters : 0;
+  const volumeMonthLiters =
+    isSupabaseConfigured && dbVolumeThisMonthLiters !== null ? dbVolumeThisMonthLiters : 0;
   const effectiveServiceFee = billingPipeSize === '1/2"' ? serviceFeeHalfInch : serviceFee;
   const billing = useMemo(
     () => calculateWaterBill(volumeForBilling, rateTiers, effectiveServiceFee),
@@ -369,18 +371,29 @@ export default function DashboardPage() {
     ? { animationPlayState: "running", animationDuration: `${animSpeed}s` }
     : { animationPlayState: "paused" };
 
-  const chartLabels = hasDbReadings
+  const hasDailyData = isSupabaseConfigured && dailyVolumeTotals.length > 0;
+
+  const chartLabels = hasDailyData
+    ? dailyVolumeTotals.map((d) => {
+        const [y, m, day] = d.date.split("-").map(Number);
+        return new Date(y, m - 1, day).toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+      })
+    : hasDbReadings
     ? dbReadings.map((r) =>
         new Date(r.recordedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })
       )
     : CHART_LABELS;
-  const chartValues = hasDbReadings ? dbReadings.map((r) => r.flowRateLpm) : chartData;
+  const chartValues = hasDailyData
+    ? dailyVolumeTotals.map((d) => Number(d.totalLiters.toFixed(1)))
+    : hasDbReadings
+    ? dbReadings.map((r) => r.flowRateLpm)
+    : chartData;
 
   const chart = {
     labels: chartLabels,
     datasets: [
       {
-        label: "Flow Rate (L/min)",
+        label: hasDailyData ? "ปริมาณน้ำต่อวัน (ลิตร)" : "Flow Rate (L/min)",
         data: chartValues,
         borderColor: "#00F2FE",
         backgroundColor: "rgba(0, 242, 254, 0.15)",
@@ -403,7 +416,7 @@ export default function DashboardPage() {
       },
       y: {
         min: 0,
-        max: 30,
+        ...(hasDailyData ? {} : { max: 30 }),
         grid: { color: "rgba(148, 163, 184, 0.1)" },
         ticks: { color: "#64748B", font: { family: "var(--font-orbitron)", size: 10 } },
       },
@@ -519,11 +532,11 @@ export default function DashboardPage() {
                   <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-12">
                     <div className="card-sub-bg flex flex-col items-center justify-center rounded-2xl p-4 md:col-span-7">
                       <span className="mb-1 text-xs text-slate-500 dark:text-slate-400">
-                        รวมทั้งวัน (Today&apos;s Total)
+                        สะสมทั้งเดือน (Monthly Total)
                       </span>
                       <div className="flex items-baseline gap-2">
                         <span className="font-[family-name:var(--font-orbitron)] text-5xl font-extrabold text-cyan-500 dark:text-cyan-400">
-                          {volumeTodayLiters.toFixed(1)}
+                          {volumeMonthLiters.toFixed(1)}
                         </span>
                         <span className="font-medium text-slate-600 dark:text-slate-300">ลิตร</span>
                       </div>
@@ -575,7 +588,11 @@ export default function DashboardPage() {
                     <div className="mb-2 flex items-center justify-between text-xs">
                       <span className="text-slate-500 dark:text-slate-400">
                         <i className="fa-solid fa-chart-line mr-1 text-cyan-500" />{" "}
-                        {hasDbReadings ? "ประวัติล่าสุดจากฐานข้อมูล" : "กราฟแสดงผล 60 วินาทีย้อนหลัง"}
+                        {hasDailyData
+                          ? "ประวัติการใช้น้ำรายวัน (จากฐานข้อมูล)"
+                          : hasDbReadings
+                          ? "ประวัติล่าสุดจากฐานข้อมูล"
+                          : "กราฟแสดงผล 60 วินาทีย้อนหลัง"}
                       </span>
                       <span className="font-[family-name:var(--font-orbitron)] text-cyan-500">
                         Live Updates

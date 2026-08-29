@@ -1,5 +1,5 @@
 import { supabase } from "./client";
-import type { Device, Reading, WaterRateSettings, RateTier, Profile } from "./types";
+import type { Device, Reading, WaterRateSettings, RateTier, Profile, DailyVolume } from "./types";
 
 function toDevice(row: Record<string, unknown>): Device {
   return {
@@ -132,6 +132,43 @@ export async function getVolumeSum(deviceId: string, start: Date, end: Date): Pr
     .lt("recorded_at", end.toISOString());
 
   return (data ?? []).reduce((sum, row) => sum + (row.volume_liters as number), 0);
+}
+
+function localDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// รวมปริมาณน้ำ (ลิตร) เป็นรายวัน ย้อนหลัง `days` วัน (รวมวันนี้) เรียงจากเก่าไปใหม่ เติม 0 ให้วันที่ไม่มีข้อมูล
+export async function getDailyVolumeTotals(deviceId: string, days: number): Promise<DailyVolume[]> {
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(start.getDate() - (days - 1));
+  start.setHours(0, 0, 0, 0);
+
+  const { data } = await supabase
+    .from("readings")
+    .select("recorded_at, volume_liters")
+    .eq("device_id", deviceId)
+    .gte("recorded_at", start.toISOString());
+
+  const totals = new Map<string, number>();
+  for (let i = 0; i < days; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    totals.set(localDateKey(d), 0);
+  }
+
+  for (const row of data ?? []) {
+    const key = localDateKey(new Date(row.recorded_at as string));
+    if (totals.has(key)) {
+      totals.set(key, (totals.get(key) ?? 0) + (row.volume_liters as number));
+    }
+  }
+
+  return Array.from(totals.entries()).map(([date, totalLiters]) => ({ date, totalLiters }));
 }
 
 export function subscribeWaterRate(callback: (settings: WaterRateSettings) => void) {
