@@ -489,24 +489,10 @@ export default function DashboardPage() {
                 <i className="fa-solid fa-triangle-exclamation" /> การแจ้งเตือนระบบประปา (Notifications)
               </span>
               <span className="rounded border border-amber-500/30 bg-amber-500/20 px-2 py-0.5 text-xs text-amber-600 dark:text-amber-300">
-                2 รายการ
+                1 รายการ
               </span>
             </div>
-            <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2">
-              <div className="flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3">
-                <div className="rounded-lg bg-red-500/20 p-2 text-lg text-red-500">
-                  <i className="fa-solid fa-faucet-drip" />
-                </div>
-                <div className="flex-1 text-xs">
-                  <div className="text-sm font-bold text-red-600 dark:text-red-300">
-                    แรงดันน้ำประปาต่ำ / น้ำไม่ไหล
-                  </div>
-                  <p className="mt-0.5 text-slate-500 dark:text-slate-400">
-                    ตรวจพบการไหลต่ำกว่าเกณฑ์ 1 L/min ขณะเปิดวาล์วหลัก
-                  </p>
-                </div>
-              </div>
-
+            <div className="grid grid-cols-1 gap-3 p-4">
               <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
                 <div className="rounded-lg bg-amber-500/20 p-2 text-lg text-amber-500">
                   <i className="fa-solid fa-triangle-exclamation" />
