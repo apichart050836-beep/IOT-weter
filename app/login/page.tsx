@@ -12,19 +12,20 @@ const SKIP_AUTH = process.env.NEXT_PUBLIC_SKIP_AUTH === "true";
 type Mode = "login" | "signup" | "admin";
 
 function describeSignUpError(err: unknown): string {
-  const code = (err as { code?: string })?.code;
   const message = err instanceof Error ? err.message : "";
-  if (code === "email_address_invalid" || message.includes("invalid")) {
+  if (message.includes("invalid")) {
     return "อีเมลนี้ใช้ไม่ได้ (ระบบไม่รับโดเมนอีเมลทดสอบ เช่น example.com) ลองใช้อีเมลจริง";
   }
-  if (code === "user_already_exists" || message.includes("already registered")) {
+  if (message.includes("already registered") || message.includes("already been registered")) {
     return "อีเมลนี้มีบัญชีอยู่แล้ว ลองเข้าสู่ระบบแทน";
   }
-  if (code === "weak_password" || message.includes("password")) {
+  if (message.includes("password")) {
     return "รหัสผ่านสั้นเกินไป ต้องมีอย่างน้อย 6 ตัวอักษร";
   }
   return "สมัครสมาชิกไม่สำเร็จ ลองใหม่อีกครั้ง";
 }
+
+const PENDING_APPROVAL = "PENDING_APPROVAL";
 
 const MODE_LABEL: Record<Mode, string> = {
   login: "เข้าสู่ระบบ",
@@ -69,11 +70,24 @@ export default function LoginPage() {
 
   async function attemptSignIn(username: string, pass: string, redirectTo: string) {
     if (isSupabaseConfigured) {
-      const { error: signInError } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: username,
         password: pass,
       });
       if (signInError) throw signInError;
+
+      const userId = signInData.user?.id;
+      if (userId) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("is_approved")
+          .eq("id", userId)
+          .maybeSingle();
+        if (profile?.is_approved === false) {
+          await supabase.auth.signOut();
+          throw new Error(PENDING_APPROVAL);
+        }
+      }
     } else {
       if (!demoLogin(username, pass)) {
         throw new Error("invalid demo credentials");
@@ -86,17 +100,15 @@ export default function LoginPage() {
     if (!isSupabaseConfigured) {
       throw new Error("Supabase ยังไม่ได้ตั้งค่า สมัครสมาชิกได้เฉพาะโหมดใช้งานจริงเท่านั้น");
     }
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email: username,
-      password: pass,
+    const res = await fetch("/api/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: username, password: pass }),
     });
-    if (signUpError) throw signUpError;
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || "signup failed");
 
-    if (data.session) {
-      router.push("/dashboard");
-    } else {
-      setInfo("สมัครสมาชิกสำเร็จ — กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ (เช็คกล่องจดหมายของคุณ)");
-    }
+    setInfo("สมัครสมาชิกสำเร็จ — กรุณารอแอดมินอนุมัติบัญชีก่อนเข้าสู่ระบบ");
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -115,6 +127,8 @@ export default function LoginPage() {
     } catch (err) {
       if (mode === "signup") {
         setError(describeSignUpError(err));
+      } else if (err instanceof Error && err.message === PENDING_APPROVAL) {
+        setError("บัญชีนี้ยังไม่ได้รับการอนุมัติจากแอดมิน กรุณารอการอนุมัติก่อนเข้าสู่ระบบ");
       } else {
         setError("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง");
       }

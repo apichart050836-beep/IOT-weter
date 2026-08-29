@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   }
 
   const [{ data: profiles, error: profilesError }, { data: devices, error: devicesError }] = await Promise.all([
-    supabase.from("profiles").select("id, email, created_at").order("created_at", { ascending: false }),
+    supabase.from("profiles").select("id, email, created_at, is_approved").order("created_at", { ascending: false }),
     supabase.from("devices").select("id, name, location, owner_id, last_seen_at, pipe_size"),
   ]);
 
@@ -31,6 +31,7 @@ export async function GET(request: Request) {
     id: p.id as string,
     email: p.email as string,
     createdAt: p.created_at as string,
+    isApproved: p.is_approved as boolean,
     device: (devices ?? [])
       .filter((d) => d.owner_id === p.id)
       .map((d) => ({

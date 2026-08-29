@@ -19,6 +19,7 @@ interface AdminUser {
   id: string;
   email: string;
   createdAt: string;
+  isApproved: boolean;
   device: AdminUserDevice | null;
 }
 
@@ -154,6 +155,7 @@ export default function AdminPage() {
   const [locationDraft, setLocationDraft] = useState("");
   const [pipeSizeDraft, setPipeSizeDraft] = useState<PipeSize>('3/4"');
   const [linkLoading, setLinkLoading] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
   useEffect(() => {
@@ -251,6 +253,33 @@ export default function AdminPage() {
     }
   }
 
+  async function approveUser(user: AdminUser) {
+    setApprovingId(user.id);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("no session");
+
+      const res = await fetch("/api/admin/users/approve", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ userId: user.id }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "approve failed");
+
+      showToast(`อนุมัติบัญชี ${user.email} แล้ว`, "success");
+      loadUsers();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "อนุมัติไม่สำเร็จ", "error");
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
   return (
     <div className={theme === "dark" ? "dark" : ""}>
       <div className="min-h-screen bg-slate-50 p-4 text-slate-900 sm:p-8 dark:bg-slate-950 dark:text-slate-100">
@@ -310,6 +339,7 @@ export default function AdminPage() {
                   <thead className="bg-slate-50 text-xs uppercase text-slate-500 dark:bg-slate-950/50">
                     <tr>
                       <th className="px-5 py-3">อีเมล</th>
+                      <th className="px-5 py-3">สถานะ</th>
                       <th className="px-5 py-3">อุปกรณ์ที่ผูกไว้</th>
                       <th className="px-5 py-3">การจัดการ</th>
                     </tr>
@@ -317,14 +347,14 @@ export default function AdminPage() {
                   <tbody>
                     {users === null && (
                       <tr>
-                        <td colSpan={3} className="px-5 py-6 text-center text-slate-500">
+                        <td colSpan={4} className="px-5 py-6 text-center text-slate-500">
                           กำลังโหลด...
                         </td>
                       </tr>
                     )}
                     {users?.length === 0 && (
                       <tr>
-                        <td colSpan={3} className="px-5 py-6 text-center text-slate-500">
+                        <td colSpan={4} className="px-5 py-6 text-center text-slate-500">
                           ยังไม่มีผู้สมัครในระบบ
                         </td>
                       </tr>
@@ -332,6 +362,17 @@ export default function AdminPage() {
                     {users?.map((user) => (
                       <tr key={user.id} className="border-t border-slate-200 dark:border-slate-800">
                         <td className="px-5 py-3 font-medium">{user.email}</td>
+                        <td className="px-5 py-3">
+                          {user.isApproved ? (
+                            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                              <i className="fa-solid fa-circle-check" /> อนุมัติแล้ว
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                              <i className="fa-solid fa-clock" /> รออนุมัติ
+                            </span>
+                          )}
+                        </td>
                         <td className="px-5 py-3 text-slate-600 dark:text-slate-300">
                           {user.device ? (
                             <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
@@ -345,13 +386,25 @@ export default function AdminPage() {
                           )}
                         </td>
                         <td className="px-5 py-3">
-                          <button
-                            onClick={() => openLinkModal(user)}
-                            className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-600 transition hover:bg-cyan-500/20 dark:text-cyan-400"
-                          >
-                            <i className="fa-solid fa-microchip" />
-                            {user.device ? "เปลี่ยนอุปกรณ์" : "ผูกอุปกรณ์ ESP"}
-                          </button>
+                          <div className="flex flex-wrap gap-2">
+                            {!user.isApproved && (
+                              <button
+                                onClick={() => approveUser(user)}
+                                disabled={approvingId === user.id}
+                                className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-60 dark:text-emerald-400"
+                              >
+                                <i className="fa-solid fa-check" />
+                                {approvingId === user.id ? "กำลังอนุมัติ..." : "อนุมัติ"}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => openLinkModal(user)}
+                              className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-600 transition hover:bg-cyan-500/20 dark:text-cyan-400"
+                            >
+                              <i className="fa-solid fa-microchip" />
+                              {user.device ? "เปลี่ยนอุปกรณ์" : "ผูกอุปกรณ์ ESP"}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

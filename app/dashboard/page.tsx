@@ -25,7 +25,7 @@ import {
   setBillingCutoffDay,
 } from "@/lib/supabase/queries";
 import { billingPeriodStart, startOfDay, now as dateNow } from "@/lib/dateRanges";
-import type { Reading, RateTier, Device } from "@/lib/supabase/types";
+import type { Reading, RateTier, Device, PipeSize } from "@/lib/supabase/types";
 import { useSession } from "@/lib/useSession";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
@@ -115,6 +115,7 @@ export default function DashboardPage() {
   const [dbVolumeTodayLiters, setDbVolumeTodayLiters] = useState<number | null>(null);
   const [rateTiers, setRateTiers] = useState<RateTier[]>(DEFAULT_TIERS);
   const [deviceInfo, setDeviceInfo] = useState<Device | null>(null);
+  const [billingPipeSize, setBillingPipeSize] = useState<PipeSize>('3/4"');
   const [billingCutoffDay, setBillingCutoffDayState] = useState(1);
   const [serviceFee, setServiceFee] = useState(DEFAULT_SERVICE_FEE);
   const [serviceFeeHalfInch, setServiceFeeHalfInch] = useState(DEFAULT_SERVICE_FEE);
@@ -161,6 +162,7 @@ export default function DashboardPage() {
       setMasterChecked(device.valveOpen);
       setActualValveOpen(device.valveOpen);
       setFlowPercent(device.targetFlowPercent);
+      setBillingPipeSize(device.pipeSize);
     });
   }, [deviceId]);
 
@@ -217,7 +219,7 @@ export default function DashboardPage() {
   const volumeForBilling =
     isSupabaseConfigured && dbVolumeThisMonthLiters !== null ? dbVolumeThisMonthLiters / 1000 : volume;
   const volumeTodayLiters = isSupabaseConfigured && dbVolumeTodayLiters !== null ? dbVolumeTodayLiters : 0;
-  const effectiveServiceFee = deviceInfo?.pipeSize === '1/2"' ? serviceFeeHalfInch : serviceFee;
+  const effectiveServiceFee = billingPipeSize === '1/2"' ? serviceFeeHalfInch : serviceFee;
   const billing = useMemo(
     () => calculateWaterBill(volumeForBilling, rateTiers, effectiveServiceFee),
     [volumeForBilling, rateTiers, effectiveServiceFee]
@@ -810,6 +812,27 @@ export default function DashboardPage() {
             </div>
 
             <div className="space-y-6 p-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                  ขนาดมาตรวัดน้ำ (มีผลกับค่าบริการทั่วไป):
+                </span>
+                <div className="flex gap-1 rounded-xl bg-slate-200 p-1 text-xs font-semibold dark:bg-slate-800">
+                  {(['1/2"', '3/4"'] as PipeSize[]).map((size) => (
+                    <button
+                      key={size}
+                      onClick={() => setBillingPipeSize(size)}
+                      className={`rounded-lg px-3 py-1.5 transition ${
+                        billingPipeSize === size
+                          ? "bg-emerald-500 text-slate-950"
+                          : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                      }`}
+                    >
+                      {size === '1/2"' ? "1/2 นิ้ว" : "3/4 นิ้ว"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div className="card-sub-bg flex items-center gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
                   <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-3 text-xl text-cyan-600 dark:text-cyan-400">
