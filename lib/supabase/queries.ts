@@ -83,8 +83,25 @@ export function subscribeLatestReadings(
     .channel(`readings-${deviceId}`)
     .on(
       "postgres_changes",
-      { event: "INSERT", schema: "public", table: "readings", filter: `device_id=eq.${deviceId}` },
+      { event: "*", schema: "public", table: "readings", filter: `device_id=eq.${deviceId}` },
       () => loadInitial()
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// แจ้งเตือนเฉยๆ ว่า readings ของ device นี้เปลี่ยน (insert/update/delete) โดยไม่ดึงข้อมูลมาเอง
+// ใช้สำหรับ trigger ให้โค้ดที่คำนวณผลรวม (เช่นยอดใช้น้ำสะสม) โหลดใหม่ทันทีแทนที่จะรอ interval
+export function subscribeReadingsChanged(deviceId: string, callback: () => void) {
+  const channel = supabase
+    .channel(`readings-changed-${deviceId}`)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "readings", filter: `device_id=eq.${deviceId}` },
+      () => callback()
     )
     .subscribe();
 

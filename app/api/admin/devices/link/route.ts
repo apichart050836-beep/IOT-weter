@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
-import { isAdminEmail } from "@/lib/adminAuth";
+import { isAdminUser } from "@/lib/adminAuth";
 
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
   const supabase = getSupabaseAdmin();
 
   const { data: callerData, error: callerError } = await supabase.auth.getUser(accessToken);
-  if (callerError || !callerData.user || !isAdminEmail(callerData.user.email)) {
+  if (callerError || !callerData.user || !(await isAdminUser(supabase, callerData.user.id, callerData.user.email))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

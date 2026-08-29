@@ -16,6 +16,7 @@ import {
   getPrimaryDeviceId,
   subscribeLatestReadings,
   subscribeDevice,
+  subscribeReadingsChanged,
   getVolumeSum,
   getDevice,
   setDeviceCommand,
@@ -23,7 +24,7 @@ import {
   subscribeWaterRate,
   setBillingCutoffDay,
 } from "@/lib/supabase/queries";
-import { billingPeriodStart, now as dateNow } from "@/lib/dateRanges";
+import { billingPeriodStart, startOfDay, now as dateNow } from "@/lib/dateRanges";
 import type { Reading, RateTier, Device } from "@/lib/supabase/types";
 import { useSession } from "@/lib/useSession";
 
@@ -111,6 +112,7 @@ export default function DashboardPage() {
   const [deviceLookupDone, setDeviceLookupDone] = useState(false);
   const [dbReadings, setDbReadings] = useState<Reading[]>([]);
   const [dbVolumeThisMonthLiters, setDbVolumeThisMonthLiters] = useState<number | null>(null);
+  const [dbVolumeTodayLiters, setDbVolumeTodayLiters] = useState<number | null>(null);
   const [rateTiers, setRateTiers] = useState<RateTier[]>(DEFAULT_TIERS);
   const [deviceInfo, setDeviceInfo] = useState<Device | null>(null);
   const [billingCutoffDay, setBillingCutoffDayState] = useState(1);
@@ -186,14 +188,22 @@ export default function DashboardPage() {
     if (!isSupabaseConfigured || !deviceId) return;
     let cancelled = false;
     async function load() {
-      const total = await getVolumeSum(deviceId as string, billingPeriodStart(billingCutoffDay), dateNow());
-      if (!cancelled) setDbVolumeThisMonthLiters(total);
+      const [periodTotal, todayTotal] = await Promise.all([
+        getVolumeSum(deviceId as string, billingPeriodStart(billingCutoffDay), dateNow()),
+        getVolumeSum(deviceId as string, startOfDay(), dateNow()),
+      ]);
+      if (!cancelled) {
+        setDbVolumeThisMonthLiters(periodTotal);
+        setDbVolumeTodayLiters(todayTotal);
+      }
     }
     load();
     const id = setInterval(load, 30_000);
+    const unsubscribe = subscribeReadingsChanged(deviceId, load);
     return () => {
       cancelled = true;
       clearInterval(id);
+      unsubscribe();
     };
   }, [deviceId, billingCutoffDay]);
 
@@ -206,6 +216,7 @@ export default function DashboardPage() {
 
   const volumeForBilling =
     isSupabaseConfigured && dbVolumeThisMonthLiters !== null ? dbVolumeThisMonthLiters / 1000 : volume;
+  const volumeTodayLiters = isSupabaseConfigured && dbVolumeTodayLiters !== null ? dbVolumeTodayLiters : 0;
   const effectiveServiceFee = deviceInfo?.pipeSize === '1/2"' ? serviceFeeHalfInch : serviceFee;
   const billing = useMemo(
     () => calculateWaterBill(volumeForBilling, rateTiers, effectiveServiceFee),
@@ -482,33 +493,6 @@ export default function DashboardPage() {
             </div>
           </header>
 
-          {/* NOTIFICATIONS */}
-          <div className="glass-panel overflow-hidden rounded-2xl">
-            <div className="glass-panel-header flex items-center justify-between px-5 py-3">
-              <span className="flex items-center gap-2 font-bold text-amber-600 dark:text-amber-400">
-                <i className="fa-solid fa-triangle-exclamation" /> การแจ้งเตือนระบบประปา (Notifications)
-              </span>
-              <span className="rounded border border-amber-500/30 bg-amber-500/20 px-2 py-0.5 text-xs text-amber-600 dark:text-amber-300">
-                1 รายการ
-              </span>
-            </div>
-            <div className="grid grid-cols-1 gap-3 p-4">
-              <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-                <div className="rounded-lg bg-amber-500/20 p-2 text-lg text-amber-500">
-                  <i className="fa-solid fa-triangle-exclamation" />
-                </div>
-                <div className="flex-1 text-xs">
-                  <div className="text-sm font-bold text-amber-600 dark:text-amber-300">
-                    อัตราการไหลสูงผิดปกติ (เฝ้าระวังน้ำรั่ว)
-                  </div>
-                  <p className="mt-0.5 text-slate-500 dark:text-slate-400">
-                    ตรวจพบอัตราการไหลต่อเนื่อง 45 L/min นานเกิน 15 นาที
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* MAIN GRID */}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
             {/* DIGITAL GAUGE */}
@@ -533,13 +517,13 @@ export default function DashboardPage() {
                   <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-12">
                     <div className="card-sub-bg flex flex-col items-center justify-center rounded-2xl p-4 md:col-span-7">
                       <span className="mb-1 text-xs text-slate-500 dark:text-slate-400">
-                        ปริมาณน้ำสะสม (จากวันตัดรอบบิล)
+                        รวมทั้งวัน (Today&apos;s Total)
                       </span>
                       <div className="flex items-baseline gap-2">
                         <span className="font-[family-name:var(--font-orbitron)] text-5xl font-extrabold text-cyan-500 dark:text-cyan-400">
-                          {billing.volume.toFixed(2)}
+                          {volumeTodayLiters.toFixed(1)}
                         </span>
-                        <span className="font-medium text-slate-600 dark:text-slate-300">ลบ.ม. (m³)</span>
+                        <span className="font-medium text-slate-600 dark:text-slate-300">ลิตร</span>
                       </div>
                       <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
                         <i className="fa-solid fa-gauge-high text-cyan-500" />

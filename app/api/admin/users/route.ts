@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
-import { isAdminEmail } from "@/lib/adminAuth";
+import { isAdminUser } from "@/lib/adminAuth";
 
 export async function GET(request: Request) {
   if (!isSupabaseAdminConfigured) {
@@ -15,7 +15,7 @@ export async function GET(request: Request) {
 
   const supabase = getSupabaseAdmin();
   const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
-  if (userError || !userData.user || !isAdminEmail(userData.user.email)) {
+  if (userError || !userData.user || !(await isAdminUser(supabase, userData.user.id, userData.user.email))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
