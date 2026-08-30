@@ -55,6 +55,7 @@ export default function DashboardPage() {
   const [lineModalOpen, setLineModalOpen] = useState(false);
   const [lineStatus, setLineStatus] = useState<LineStatus | null>(null);
   const [lineConnecting, setLineConnecting] = useState(false);
+  const [lineTesting, setLineTesting] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
   // ข้อมูลจริงจาก Supabase (ใช้เมื่อ isSupabaseConfigured เท่านั้น) — ไม่งั้น fallback ไปโหมดจำลองทั้งหมด
@@ -320,6 +321,26 @@ export default function DashboardPage() {
     } catch (err) {
       setLineStatus(previous);
       showToast(err instanceof Error ? err.message : "บันทึกการตั้งค่าไม่สำเร็จ", "error");
+    }
+  }
+
+  async function sendTestLineMessage() {
+    setLineTesting(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("no session");
+      const res = await fetch("/api/line/test", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "test failed");
+      showToast("ส่งข้อความทดสอบไปยัง LINE แล้ว", "success");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "ส่งข้อความทดสอบไม่สำเร็จ", "error");
+    } finally {
+      setLineTesting(false);
     }
   }
 
@@ -1007,6 +1028,15 @@ export default function DashboardPage() {
                       แจ้งเตือนน้ำไหลนานเกิน 1 ชม. (เฝ้าระวังน้ำรั่ว)
                     </label>
                   </div>
+
+                  <button
+                    onClick={sendTestLineMessage}
+                    disabled={lineTesting}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-200 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-300 disabled:opacity-60 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                  >
+                    <i className="fa-solid fa-paper-plane" />
+                    {lineTesting ? "กำลังส่ง..." : "ทดสอบส่ง"}
+                  </button>
                 </>
               ) : (
                 <>

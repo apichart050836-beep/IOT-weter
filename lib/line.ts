@@ -48,8 +48,8 @@ export async function getLineProfile(accessToken: string): Promise<LineProfile> 
   return res.json();
 }
 
-export async function pushLineMessage(toUserId: string, text: string): Promise<void> {
-  if (!isLineMessagingConfigured) return;
+export async function pushLineMessage(toUserId: string, text: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isLineMessagingConfigured) return { ok: false, error: "LINE Messaging API ยังไม่ได้ตั้งค่า" };
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
@@ -59,8 +59,11 @@ export async function pushLineMessage(toUserId: string, text: string): Promise<v
     body: JSON.stringify({ to: toUserId, messages: [{ type: "text", text }] }),
   });
   if (!res.ok) {
-    console.error("LINE push failed:", await res.text());
+    const errText = await res.text();
+    console.error("LINE push failed:", errText);
+    return { ok: false, error: errText };
   }
+  return { ok: true };
 }
 
 export async function replyLineMessage(replyToken: string, messages: unknown[]): Promise<void> {

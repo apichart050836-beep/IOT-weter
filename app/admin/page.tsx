@@ -25,10 +25,19 @@ interface AdminUser {
 
 type Toast = { message: string; tone: "success" | "error" };
 
+interface UnlinkedDevice {
+  id: string;
+  name: string;
+  deviceKeyHash: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+}
+
 function LinkDeviceModal({
   targetEmail,
-  keyDraft,
-  setKeyDraft,
+  unlinkedDevices,
+  deviceIdDraft,
+  setDeviceIdDraft,
   nameDraft,
   setNameDraft,
   locationDraft,
@@ -40,8 +49,9 @@ function LinkDeviceModal({
   onSubmit,
 }: {
   targetEmail: string;
-  keyDraft: string;
-  setKeyDraft: (v: string) => void;
+  unlinkedDevices: UnlinkedDevice[];
+  deviceIdDraft: string;
+  setDeviceIdDraft: (v: string) => void;
   nameDraft: string;
   setNameDraft: (v: string) => void;
   locationDraft: string;
@@ -66,22 +76,34 @@ function LinkDeviceModal({
 
         <p className="text-xs text-slate-500 dark:text-slate-400">
           ผูกอุปกรณ์ให้บัญชี <span className="font-semibold text-cyan-600 dark:text-cyan-400">{targetEmail}</span> —
-          กรอกรหัสลับ (device key) ที่ตั้งไว้ในเฟิร์มแวร์ ESP32 ระบบจะคำนวณ hash ให้เองฝั่งเซิร์ฟเวอร์
-          ถ้ายังไม่เคยลงทะเบียนอุปกรณ์นี้มาก่อน ระบบจะสร้างให้ใหม่และผูกกับบัญชีนี้ทันที
+          เลือกจากอุปกรณ์ที่ยิงข้อมูลเข้าระบบแล้วแต่ยังไม่ได้ผูกกับบัญชีใด
+          (อุปกรณ์จะลงทะเบียนตัวเองอัตโนมัติตอนส่งข้อมูลเข้า /api/ingest ครั้งแรก)
         </p>
 
         <div className="space-y-3">
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-              รหัสลับอุปกรณ์ (device key) *
+              อุปกรณ์ที่ยังไม่ได้ผูก *
             </label>
-            <input
-              type="text"
-              value={keyDraft}
-              onChange={(e) => setKeyDraft(e.target.value)}
-              placeholder="เช่น YOUR_SECRET_KEY"
-              className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-cyan-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:placeholder-slate-600"
-            />
+            {unlinkedDevices.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-400 dark:border-slate-700 dark:text-slate-500">
+                ยังไม่มีอุปกรณ์ที่รอผูกบัญชี — รอให้อุปกรณ์ส่งข้อมูลเข้าระบบก่อน
+              </p>
+            ) : (
+              <select
+                value={deviceIdDraft}
+                onChange={(e) => setDeviceIdDraft(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:border-cyan-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              >
+                <option value="">-- เลือกอุปกรณ์ --</option>
+                {unlinkedDevices.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} • hash {d.deviceKeyHash.slice(0, 12)}…
+                    {d.lastSeenAt ? ` • เห็นล่าสุด ${new Date(d.lastSeenAt).toLocaleString("th-TH")}` : ""}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">
@@ -131,7 +153,7 @@ function LinkDeviceModal({
           </button>
           <button
             onClick={onSubmit}
-            disabled={loading}
+            disabled={loading || !deviceIdDraft}
             className="rounded-xl bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
           >
             {loading ? "กำลังผูก..." : "ผูกอุปกรณ์"}
@@ -149,8 +171,9 @@ export default function AdminPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
 
+  const [unlinkedDevices, setUnlinkedDevices] = useState<UnlinkedDevice[]>([]);
   const [linkTarget, setLinkTarget] = useState<AdminUser | null>(null);
-  const [keyDraft, setKeyDraft] = useState("");
+  const [deviceIdDraft, setDeviceIdDraft] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [locationDraft, setLocationDraft] = useState("");
   const [pipeSizeDraft, setPipeSizeDraft] = useState<PipeSize>('3/4"');
@@ -198,14 +221,29 @@ export default function AdminPage() {
     setUsers(result.users);
   }
 
+  async function loadUnlinkedDevices() {
+    if (!isSupabaseConfigured) return;
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) return;
+
+    const res = await fetch("/api/admin/devices", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return;
+    const result = await res.json();
+    setUnlinkedDevices(result.devices ?? []);
+  }
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadUsers();
+    loadUnlinkedDevices();
   }, []);
 
   function openLinkModal(user: AdminUser) {
     setLinkTarget(user);
-    setKeyDraft("");
+    setDeviceIdDraft("");
     setNameDraft("");
     setLocationDraft("");
     setPipeSizeDraft(user.device?.pipeSize ?? '3/4"');
@@ -213,8 +251,8 @@ export default function AdminPage() {
 
   async function handleLinkDevice() {
     if (!linkTarget) return;
-    if (!keyDraft.trim()) {
-      showToast("กรอกรหัสลับของอุปกรณ์ก่อน", "error");
+    if (!deviceIdDraft) {
+      showToast("เลือกอุปกรณ์ก่อน", "error");
       return;
     }
     setLinkLoading(true);
@@ -231,7 +269,7 @@ export default function AdminPage() {
         },
         body: JSON.stringify({
           userId: linkTarget.id,
-          deviceKey: keyDraft.trim(),
+          deviceId: deviceIdDraft,
           name: nameDraft.trim() || undefined,
           location: locationDraft.trim() || undefined,
           pipeSize: pipeSizeDraft,
@@ -240,12 +278,10 @@ export default function AdminPage() {
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "link failed");
 
-      showToast(
-        result.created ? "ลงทะเบียนอุปกรณ์ใหม่และผูกกับบัญชีนี้แล้ว" : "ผูกอุปกรณ์กับบัญชีนี้แล้ว",
-        "success"
-      );
+      showToast("ผูกอุปกรณ์กับบัญชีนี้แล้ว", "success");
       setLinkTarget(null);
       loadUsers();
+      loadUnlinkedDevices();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "ผูกอุปกรณ์ไม่สำเร็จ", "error");
     } finally {
@@ -418,8 +454,9 @@ export default function AdminPage() {
         {linkTarget && (
           <LinkDeviceModal
             targetEmail={linkTarget.email}
-            keyDraft={keyDraft}
-            setKeyDraft={setKeyDraft}
+            unlinkedDevices={unlinkedDevices}
+            deviceIdDraft={deviceIdDraft}
+            setDeviceIdDraft={setDeviceIdDraft}
             nameDraft={nameDraft}
             setNameDraft={setNameDraft}
             locationDraft={locationDraft}

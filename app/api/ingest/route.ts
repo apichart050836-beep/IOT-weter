@@ -43,15 +43,30 @@ export async function POST(request: Request) {
   const supabase = getSupabaseAdmin();
   const keyHash = hashKey(deviceKey);
 
-  const { data: device, error: deviceError } = await supabase
+  const { data: found, error: deviceError } = await supabase
     .from("devices")
     .select("id, owner_id, valve_open, flow_started_at, no_flow_alerted_at, long_flow_alerted_at")
     .eq("device_key_hash", keyHash)
     .limit(1)
     .maybeSingle();
 
-  if (deviceError || !device) {
-    return NextResponse.json({ error: "Unknown device key" }, { status: 401 });
+  if (deviceError) {
+    return NextResponse.json({ error: deviceError.message }, { status: 500 });
+  }
+
+  // ยังไม่เคยเห็น device key นี้มาก่อน → ลงทะเบียนอุปกรณ์ใหม่แบบยังไม่ผูกบัญชี (owner_id null)
+  // แอดมินจะมาเลือกผูกกับผู้ใช้ทีหลังจากหน้า /admin (ไม่ต้องสร้างอุปกรณ์เองจากหน้าแอดมิน)
+  let device = found;
+  if (!device) {
+    const { data: created, error: createError } = await supabase
+      .from("devices")
+      .insert({ device_key_hash: keyHash, name: "อุปกรณ์ใหม่ (รอผูกบัญชี)" })
+      .select("id, owner_id, valve_open, flow_started_at, no_flow_alerted_at, long_flow_alerted_at")
+      .single();
+    if (createError) {
+      return NextResponse.json({ error: createError.message }, { status: 500 });
+    }
+    device = created;
   }
 
   const { flowRateLpm, volumeLiters, wifiRssi, batteryPercent } = body;

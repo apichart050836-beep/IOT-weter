@@ -1,17 +1,12 @@
 import { NextResponse } from "next/server";
-import { createHash } from "node:crypto";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { isAdminUser } from "@/lib/adminAuth";
-
-function hashKey(key: string): string {
-  return createHash("sha256").update(key).digest("hex");
-}
 
 type PipeSize = '1/2"' | '3/4"';
 
 interface LinkPayload {
   userId: string;
-  deviceKey: string;
+  deviceId: string;
   name?: string;
   location?: string;
   pipeSize?: PipeSize;
@@ -24,11 +19,13 @@ function isValidPayload(body: unknown): body is LinkPayload {
   return (
     typeof b.userId === "string" &&
     b.userId.trim().length > 0 &&
-    typeof b.deviceKey === "string" &&
-    b.deviceKey.trim().length > 0
+    typeof b.deviceId === "string" &&
+    b.deviceId.trim().length > 0
   );
 }
 
+// ผูกอุปกรณ์ที่มีอยู่แล้ว (ลงทะเบียนเองผ่าน /api/ingest) เข้ากับผู้ใช้ที่เลือก
+// อัปเดตอย่างเดียว ไม่สร้างอุปกรณ์ใหม่จากหน้านี้
 export async function POST(request: Request) {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase is not configured on the server" }, { status: 503 });
@@ -52,53 +49,40 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { userId, deviceKey, name, location, pipeSize } = body;
-  const keyHash = hashKey(deviceKey.trim());
+  const { userId, deviceId, name, location, pipeSize } = body;
 
-  const { data: existing, error: findError } = await supabase
+  const { data: target, error: findError } = await supabase
     .from("devices")
     .select("id, owner_id")
-    .eq("device_key_hash", keyHash)
+    .eq("id", deviceId)
     .maybeSingle();
 
   if (findError) {
     return NextResponse.json({ error: findError.message }, { status: 500 });
   }
-
-  if (existing) {
-    if (existing.owner_id && existing.owner_id !== userId) {
-      return NextResponse.json({ error: "อุปกรณ์นี้ถูกผูกกับบัญชีอื่นแล้ว" }, { status: 409 });
-    }
-    const { error: updateError } = await supabase
-      .from("devices")
-      .update({
-        owner_id: userId,
-        ...(name ? { name } : {}),
-        ...(location ? { location } : {}),
-        ...(pipeSize ? { pipe_size: pipeSize } : {}),
-      })
-      .eq("id", existing.id);
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
-    }
-    return NextResponse.json({ ok: true, deviceId: existing.id, created: false });
+  if (!target) {
+    return NextResponse.json({ error: "ไม่พบอุปกรณ์นี้" }, { status: 404 });
+  }
+  if (target.owner_id && target.owner_id !== userId) {
+    return NextResponse.json({ error: "อุปกรณ์นี้ถูกผูกกับบัญชีอื่นแล้ว" }, { status: 409 });
   }
 
-  const { data: created, error: insertError } = await supabase
+  // ถ้าผู้ใช้คนนี้มีอุปกรณ์อื่นผูกอยู่ก่อนแล้ว ให้ปลดออกก่อน (โมเดล 1 บัญชี : 1 อุปกรณ์)
+  await supabase.from("devices").update({ owner_id: null }).eq("owner_id", userId).neq("id", deviceId);
+
+  const { error: updateError } = await supabase
     .from("devices")
-    .insert({
-      device_key_hash: keyHash,
+    .update({
       owner_id: userId,
-      name: name || "มิเตอร์น้ำหลัก",
-      location: location || null,
-      pipe_size: pipeSize || '3/4"',
+      ...(name ? { name } : {}),
+      ...(location ? { location } : {}),
+      ...(pipeSize ? { pipe_size: pipeSize } : {}),
     })
-    .select("id")
-    .single();
+    .eq("id", deviceId);
 
-  if (insertError) {
-    return NextResponse.json({ error: insertError.message }, { status: 500 });
+  if (updateError) {
+    return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, deviceId: created.id, created: true }, { status: 201 });
+  return NextResponse.json({ ok: true, deviceId });
 }
