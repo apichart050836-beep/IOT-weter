@@ -1,5 +1,5 @@
 import { supabase } from "./client";
-import type { Device, Reading, WaterRateSettings, RateTier, Profile, DailyVolume, LineStatus } from "./types";
+import type { Device, Reading, WaterRateSettings, RateTier, DailyVolume, LineStatus } from "./types";
 
 function toDevice(row: Record<string, unknown>): Device {
   return {
@@ -222,20 +222,6 @@ export async function getRateTiers(): Promise<RateTier[]> {
     label: row.label as string,
     unitLimit: (row.unit_limit as number) ?? null,
     ratePerUnit: row.rate_per_unit as number,
-  }));
-}
-
-// รายชื่อผู้สมัครทั้งหมด (สำหรับหน้า admin ในอนาคต)
-export async function getProfiles(): Promise<Profile[]> {
-  const { data } = await supabase
-    .from("profiles")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  return (data ?? []).map((row) => ({
-    id: row.id as string,
-    email: row.email as string,
-    createdAt: row.created_at as string,
   }));
 }
 

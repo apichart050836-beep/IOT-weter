@@ -179,6 +179,7 @@ export default function AdminPage() {
   const [pipeSizeDraft, setPipeSizeDraft] = useState<PipeSize>('3/4"');
   const [linkLoading, setLinkLoading] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [unlinkingId, setUnlinkingId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
   useEffect(() => {
@@ -316,6 +317,37 @@ export default function AdminPage() {
     }
   }
 
+  async function unlinkDevice(user: AdminUser) {
+    if (!user.device) return;
+    if (!window.confirm(`ยกเลิกการผูกอุปกรณ์ "${user.device.name}" ออกจากบัญชี ${user.email}?`)) return;
+
+    setUnlinkingId(user.id);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("no session");
+
+      const res = await fetch("/api/admin/devices/unlink", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ deviceId: user.device.id }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "unlink failed");
+
+      showToast(`ยกเลิกอุปกรณ์ของ ${user.email} แล้ว`, "success");
+      loadUsers();
+      loadUnlinkedDevices();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "ยกเลิกอุปกรณ์ไม่สำเร็จ", "error");
+    } finally {
+      setUnlinkingId(null);
+    }
+  }
+
   return (
     <div className={theme === "dark" ? "dark" : ""}>
       <div className="min-h-screen bg-slate-50 p-4 text-slate-900 sm:p-8 dark:bg-slate-950 dark:text-slate-100">
@@ -440,6 +472,16 @@ export default function AdminPage() {
                               <i className="fa-solid fa-microchip" />
                               {user.device ? "เปลี่ยนอุปกรณ์" : "ผูกอุปกรณ์ ESP"}
                             </button>
+                            {user.device && (
+                              <button
+                                onClick={() => unlinkDevice(user)}
+                                disabled={unlinkingId === user.id}
+                                className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs text-red-600 transition hover:bg-red-500/20 disabled:opacity-60 dark:text-red-400"
+                              >
+                                <i className="fa-solid fa-link-slash" />
+                                {unlinkingId === user.id ? "กำลังยกเลิก..." : "ยกเลิกอุปกรณ์"}
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

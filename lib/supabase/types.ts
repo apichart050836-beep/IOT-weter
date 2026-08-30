@@ -41,12 +41,6 @@ export interface RateTier {
   ratePerUnit: number;
 }
 
-export interface Profile {
-  id: string;
-  email: string;
-  createdAt: string;
-}
-
 export interface DailyVolume {
   date: string; // YYYY-MM-DD ตามเวลาเครื่อง (local)
   totalLiters: number;
