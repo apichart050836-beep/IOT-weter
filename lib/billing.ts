@@ -1,6 +1,5 @@
 import type { RateTier } from "./supabase/types";
 
-export const DAYS_IN_PERIOD = 15;
 export const DEFAULT_SERVICE_FEE = 30;
 export const VAT_RATE = 0.07;
 
@@ -17,12 +16,34 @@ export interface BillResult {
   tierCosts: number[];
   waterCost: number;
   serviceFee: number;
+  otherCharges: number;
   vat: number;
   grandTotal: number;
   dailyAvg: number;
 }
 
-export function calculateWaterBill(volume: number, tiers: RateTier[], serviceFee: number): BillResult {
+export function calculateWaterBill(
+  volume: number,
+  tiers: RateTier[],
+  serviceFee: number,
+  daysInPeriod: number,
+  otherCharges: number = 0
+): BillResult {
+  // ไม่ใช้น้ำเลย = ไม่เก็บค่าอะไรทั้งสิ้น (รวมค่าบริการทั่วไปและค่าอื่นๆ ด้วย)
+  if (volume <= 0) {
+    return {
+      volume: 0,
+      tierUsages: tiers.map(() => 0),
+      tierCosts: tiers.map(() => 0),
+      waterCost: 0,
+      serviceFee: 0,
+      otherCharges: 0,
+      vat: 0,
+      grandTotal: 0,
+      dailyAvg: 0,
+    };
+  }
+
   let remaining = volume;
   let waterCost = 0;
   const tierUsages = tiers.map(() => 0);
@@ -39,7 +60,7 @@ export function calculateWaterBill(volume: number, tiers: RateTier[], serviceFee
   });
 
   const vat = (waterCost + serviceFee) * VAT_RATE;
-  const grandTotal = waterCost + serviceFee + vat;
+  const grandTotal = waterCost + serviceFee + vat + otherCharges;
 
   return {
     volume,
@@ -47,8 +68,9 @@ export function calculateWaterBill(volume: number, tiers: RateTier[], serviceFee
     tierCosts,
     waterCost,
     serviceFee,
+    otherCharges,
     vat,
     grandTotal,
-    dailyAvg: grandTotal / DAYS_IN_PERIOD,
+    dailyAvg: grandTotal / Math.max(1, daysInPeriod),
   };
 }

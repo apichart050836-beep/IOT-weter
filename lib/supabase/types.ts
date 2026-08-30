@@ -31,6 +31,8 @@ export interface WaterRateSettings {
   billingCutoffDay: number; // วันที่ตัดรอบบิลของทุกเดือน (1-28)
   serviceFee: number; // ค่าบริการทั่วไปรายเดือน สำหรับท่อ 3/4" (บาท)
   serviceFeeHalfInch: number; // ค่าบริการทั่วไปรายเดือน สำหรับท่อ 1/2" (บาท)
+  otherCharges: number; // ค่าใช้จ่ายอื่นๆ เพิ่มเติม สำหรับท่อ 3/4" เริ่มต้น 0
+  otherChargesHalfInch: number; // ค่าใช้จ่ายอื่นๆ เพิ่มเติม สำหรับท่อ 1/2" เริ่มต้น 0
   updatedAt: string | null;
 }
 

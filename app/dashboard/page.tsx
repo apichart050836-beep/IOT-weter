@@ -24,10 +24,11 @@ import {
   getRateTiers,
   subscribeWaterRate,
   setBillingCutoffDay,
+  setOtherCharges,
   getLineStatus,
 } from "@/lib/supabase/queries";
 import { billingPeriodStart, now as dateNow } from "@/lib/dateRanges";
-import { calculateWaterBill, DEFAULT_TIERS, DEFAULT_SERVICE_FEE, DAYS_IN_PERIOD } from "@/lib/billing";
+import { calculateWaterBill, DEFAULT_TIERS, DEFAULT_SERVICE_FEE } from "@/lib/billing";
 import type { Reading, RateTier, Device, PipeSize, DailyVolume, LineStatus } from "@/lib/supabase/types";
 import { useSession } from "@/lib/useSession";
 
@@ -70,8 +71,12 @@ export default function DashboardPage() {
   const [billingCutoffDay, setBillingCutoffDayState] = useState(1);
   const [serviceFee, setServiceFee] = useState(DEFAULT_SERVICE_FEE);
   const [serviceFeeHalfInch, setServiceFeeHalfInch] = useState(DEFAULT_SERVICE_FEE);
+  const [otherCharges, setOtherChargesState] = useState(0);
+  const [otherChargesHalfInch, setOtherChargesHalfInchState] = useState(0);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [cutoffDayDraft, setCutoffDayDraft] = useState("1");
+  const [otherChargesHalfInchDraft, setOtherChargesHalfInchDraft] = useState("0");
+  const [otherChargesThreeQuarterDraft, setOtherChargesThreeQuarterDraft] = useState("0");
 
   const { signOut } = useSession();
 
@@ -182,6 +187,8 @@ export default function DashboardPage() {
       setCutoffDayDraft(String(settings.billingCutoffDay));
       setServiceFee(settings.serviceFee);
       setServiceFeeHalfInch(settings.serviceFeeHalfInch);
+      setOtherChargesState(settings.otherCharges);
+      setOtherChargesHalfInchState(settings.otherChargesHalfInch);
     });
   }, []);
 
@@ -220,9 +227,14 @@ export default function DashboardPage() {
   const volumeMonthLiters =
     isSupabaseConfigured && dbVolumeThisMonthLiters !== null ? dbVolumeThisMonthLiters : 0;
   const effectiveServiceFee = billingPipeSize === '1/2"' ? serviceFeeHalfInch : serviceFee;
+  const effectiveOtherCharges = billingPipeSize === '1/2"' ? otherChargesHalfInch : otherCharges;
+  const daysInPeriod = Math.max(
+    1,
+    Math.ceil((dateNow().getTime() - billingPeriodStart(billingCutoffDay).getTime()) / 86_400_000)
+  );
   const billing = useMemo(
-    () => calculateWaterBill(volumeForBilling, rateTiers, effectiveServiceFee),
-    [volumeForBilling, rateTiers, effectiveServiceFee]
+    () => calculateWaterBill(volumeForBilling, rateTiers, effectiveServiceFee, daysInPeriod, effectiveOtherCharges),
+    [volumeForBilling, rateTiers, effectiveServiceFee, daysInPeriod, effectiveOtherCharges]
   );
 
   useEffect(() => {
@@ -346,12 +358,14 @@ export default function DashboardPage() {
 
   async function saveBillingCutoffDay() {
     const day = Math.min(28, Math.max(1, Number(cutoffDayDraft) || 1));
+    const halfInchCharge = Math.max(0, Number(otherChargesHalfInchDraft) || 0);
+    const threeQuarterCharge = Math.max(0, Number(otherChargesThreeQuarterDraft) || 0);
     if (!isSupabaseConfigured) {
       showToast("ต้องตั้งค่า Supabase ก่อนถึงจะบันทึกได้", "error");
       return;
     }
     try {
-      await setBillingCutoffDay(day);
+      await Promise.all([setBillingCutoffDay(day), setOtherCharges(halfInchCharge, threeQuarterCharge)]);
       showToast(`ตั้งวันตัดรอบบิลเป็นวันที่ ${day} ของทุกเดือนแล้ว`, "success");
       setSettingsModalOpen(false);
     } catch {
@@ -492,6 +506,8 @@ export default function DashboardPage() {
               <button
                 onClick={() => {
                   setCutoffDayDraft(String(billingCutoffDay));
+                  setOtherChargesHalfInchDraft(String(otherChargesHalfInch));
+                  setOtherChargesThreeQuarterDraft(String(otherCharges));
                   setSettingsModalOpen(true);
                 }}
                 title="ตั้งค่าวันตัดรอบบิล"
@@ -895,7 +911,7 @@ export default function DashboardPage() {
                   </div>
                   <div>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
-                      ค่าน้ำเฉลี่ยต่อวัน (ใช้น้ำมา {DAYS_IN_PERIOD} วัน)
+                      ค่าน้ำเฉลี่ยต่อวัน (ใช้น้ำมา {daysInPeriod} วัน)
                     </span>
                     <div className="mt-0.5 flex items-baseline gap-1">
                       <span className="font-[family-name:var(--font-orbitron)] text-2xl font-bold text-slate-800 dark:text-white">
@@ -965,6 +981,16 @@ export default function DashboardPage() {
                           {billing.vat.toFixed(2)} บาท
                         </td>
                       </tr>
+                      {billing.otherCharges > 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-4 py-1.5 text-right text-slate-500 dark:text-slate-400">
+                            ค่าใช้จ่ายอื่นๆ:
+                          </td>
+                          <td className="px-4 py-1.5 text-right font-[family-name:var(--font-orbitron)] font-semibold text-slate-800 dark:text-white">
+                            {billing.otherCharges.toFixed(2)} บาท
+                          </td>
+                        </tr>
+                      )}
                       <tr className="border-t border-emerald-300 bg-emerald-50 text-sm font-bold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-400">
                         <td colSpan={3} className="px-4 py-3 text-right">
                           ยอดรวมสุทธิที่ต้องชำระทั้งสิ้น:
@@ -1089,6 +1115,34 @@ export default function DashboardPage() {
                   max={28}
                   value={cutoffDayDraft}
                   onChange={(e) => setCutoffDayDraft(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  ค่าใช้จ่ายอื่นๆ (บาท) — ท่อ 1/2 นิ้ว
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={otherChargesHalfInchDraft}
+                  onChange={(e) => setOtherChargesHalfInchDraft(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  ค่าใช้จ่ายอื่นๆ (บาท) — ท่อ 3/4 นิ้ว
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={otherChargesThreeQuarterDraft}
+                  onChange={(e) => setOtherChargesThreeQuarterDraft(e.target.value)}
                   className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                 />
               </div>

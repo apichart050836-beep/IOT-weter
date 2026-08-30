@@ -178,6 +178,8 @@ export function subscribeWaterRate(callback: (settings: WaterRateSettings) => vo
       billingCutoffDay: (row?.billing_cutoff_day as number) ?? 1,
       serviceFee: (row?.service_fee as number) ?? 30,
       serviceFeeHalfInch: (row?.service_fee_half_inch as number) ?? 30,
+      otherCharges: (row?.other_charges as number) ?? 0,
+      otherChargesHalfInch: (row?.other_charges_half_inch as number) ?? 0,
       updatedAt: (row?.updated_at as string) ?? null,
     };
   }
@@ -207,6 +209,18 @@ export async function setBillingCutoffDay(day: number): Promise<void> {
   const { error } = await supabase
     .from("water_rate_settings")
     .update({ billing_cutoff_day: day, updated_at: new Date().toISOString() })
+    .eq("id", 1);
+  if (error) throw error;
+}
+
+export async function setOtherCharges(halfInch: number, threeQuarter: number): Promise<void> {
+  const { error } = await supabase
+    .from("water_rate_settings")
+    .update({
+      other_charges_half_inch: halfInch,
+      other_charges: threeQuarter,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", 1);
   if (error) throw error;
 }

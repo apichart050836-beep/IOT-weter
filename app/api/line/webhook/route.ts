@@ -57,15 +57,22 @@ async function handleTextQuery(deviceId: string, pipeSize: string, text: string)
       pipeSize === '1/2"'
         ? ((settings?.service_fee_half_inch as number) ?? DEFAULT_SERVICE_FEE)
         : ((settings?.service_fee as number) ?? DEFAULT_SERVICE_FEE);
+    const otherCharges =
+      pipeSize === '1/2"'
+        ? ((settings?.other_charges_half_inch as number) ?? 0)
+        : ((settings?.other_charges as number) ?? 0);
 
-    const liters = await volumeSumBetween(deviceId, billingPeriodStart(cutoffDay), dateNow());
-    const bill = calculateWaterBill(liters / 1000, tiers, serviceFee);
+    const periodStart = billingPeriodStart(cutoffDay);
+    const liters = await volumeSumBetween(deviceId, periodStart, dateNow());
+    const daysInPeriod = Math.max(1, Math.ceil((dateNow().getTime() - periodStart.getTime()) / 86_400_000));
+    const bill = calculateWaterBill(liters / 1000, tiers, serviceFee, daysInPeriod, otherCharges);
 
     return [
       `บิลค่าน้ำรอบปัจจุบัน`,
       `ปริมาณน้ำสะสม: ${bill.volume.toFixed(2)} ลบ.ม.`,
       `ค่าน้ำ: ${bill.waterCost.toFixed(2)} บาท`,
       `ค่าบริการ: ${bill.serviceFee.toFixed(2)} บาท`,
+      ...(bill.otherCharges > 0 ? [`ค่าใช้จ่ายอื่นๆ: ${bill.otherCharges.toFixed(2)} บาท`] : []),
       `ภาษีมูลค่าเพิ่ม (7%): ${bill.vat.toFixed(2)} บาท`,
       `รวมทั้งสิ้น: ${bill.grandTotal.toFixed(2)} บาท`,
     ].join("\n");
