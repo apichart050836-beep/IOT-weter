@@ -16,6 +16,7 @@ function toDevice(row: Record<string, unknown>): Device {
     commandUpdatedAt: (row.command_updated_at as string) ?? null,
     ownerId: (row.owner_id as string) ?? null,
     pipeSize: (row.pipe_size as Device["pipeSize"]) ?? '3/4"',
+    status: (row.status as string) ?? null,
   };
 }
 

@@ -15,6 +15,7 @@ export interface Device {
   commandUpdatedAt: string | null;
   ownerId: string | null;
   pipeSize: PipeSize; // ขนาดท่อ — มีผลกับค่าบริการทั่วไปที่ใช้คำนวณบิล
+  status: string | null; // "online" | "offline" — อัปเดตโดยเฟิร์มแวร์ ESP32 โดยตรง
 }
 
 export interface Reading {

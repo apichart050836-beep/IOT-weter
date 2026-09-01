@@ -219,6 +219,7 @@ export default function DashboardPage() {
   const currentFlow = actualValveOpen ? Number((BASE_FLOW_LPM * sliderFactor).toFixed(1)) : 0;
 
   const hasDbReadings = isSupabaseConfigured && dbReadings.length > 0;
+  const isDeviceOnline = deviceInfo?.status === "online";
   const displayFlow = hasDbReadings ? dbReadings[dbReadings.length - 1].flowRateLpm : currentFlow;
   const percentage = Math.min(100, Math.round((displayFlow / BASE_FLOW_LPM) * 100));
 
@@ -559,9 +560,19 @@ export default function DashboardPage() {
                     <span className="hidden text-xs text-slate-500 sm:inline dark:text-slate-400">
                       อัตราการไหลปัจจุบัน (Current Flow Rate)
                     </span>
-                    <div className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                      <span className="h-2 w-2 animate-ping rounded-full bg-emerald-500" />
-                      <span>Online</span>
+                    <div
+                      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs ${
+                        isDeviceOnline
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          : "border-slate-400/30 bg-slate-400/10 text-slate-500 dark:text-slate-400"
+                      }`}
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          isDeviceOnline ? "animate-ping bg-emerald-500" : "bg-slate-400"
+                        }`}
+                      />
+                      <span>{isDeviceOnline ? "Online" : "Offline"}</span>
                     </div>
                   </div>
                 </div>
@@ -1079,6 +1090,18 @@ export default function DashboardPage() {
                     {lineConnecting ? "กำลังเชื่อมต่อ..." : "เชื่อมต่อบัญชี LINE"}
                   </button>
                 </>
+              )}
+
+              {process.env.NEXT_PUBLIC_LINE_BASIC_ID && (
+                <a
+                  href={`https://line.me/R/ti/p/@${process.env.NEXT_PUBLIC_LINE_BASIC_ID}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 py-2 text-xs font-semibold text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400"
+                >
+                  <i className="fa-solid fa-user-plus" />
+                  เพิ่มเพื่อน LINE OA (@{process.env.NEXT_PUBLIC_LINE_BASIC_ID})
+                </a>
               )}
             </div>
           </div>
