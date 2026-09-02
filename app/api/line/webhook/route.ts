@@ -25,7 +25,7 @@ async function volumeSumBetween(deviceId: string, start: Date, end: Date): Promi
 async function handleTextQuery(deviceId: string, pipeSize: string, text: string): Promise<string | null> {
   const supabase = getSupabaseAdmin();
 
-  if (text === "ใช้น้ำวันนี้") {
+  if (text === "ใช้น้ำแล้วกี่หน่วย") {
     const liters = await volumeSumBetween(deviceId, thailandStartOfDay(), dateNow());
     return `ปริมาณน้ำที่ใช้วันนี้: ${liters.toFixed(1)} ลิตร`;
   }
@@ -33,6 +33,22 @@ async function handleTextQuery(deviceId: string, pipeSize: string, text: string)
   if (text === "ใช้น้ำเดือนนี้") {
     const liters = await volumeSumBetween(deviceId, thailandStartOfMonth(), dateNow());
     return `ปริมาณน้ำที่ใช้เดือนนี้: ${liters.toFixed(1)} ลิตร (${(liters / 1000).toFixed(2)} ลบ.ม.)`;
+  }
+
+  if (text === "ตรวจสอบแบต") {
+    const { data: device } = await supabase
+      .from("devices")
+      .select("last_battery_percent, last_seen_at")
+      .eq("id", deviceId)
+      .maybeSingle();
+
+    if (!device || device.last_battery_percent === null) {
+      return "อุปกรณ์นี้ไม่มีข้อมูลแบตเตอรี่ (อาจใช้ไฟจากปลั๊กโดยตรง)";
+    }
+    const seenAt = device.last_seen_at
+      ? new Date(device.last_seen_at as string).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })
+      : "ไม่ทราบเวลา";
+    return `แบตเตอรี่: ${device.last_battery_percent}%\nเมื่อ: ${seenAt}`;
   }
 
   if (text === "บิลค่าน้ำปัจจุบัน") {
@@ -69,7 +85,7 @@ async function handleTextQuery(deviceId: string, pipeSize: string, text: string)
 
     return [
       `บิลค่าน้ำรอบปัจจุบัน`,
-      `ปริมาณน้ำสะสม: ${bill.volume.toFixed(2)} ลบ.ม.`,
+      `ปริมาณน้ำสะสม: ${(bill.volume * 1000).toFixed(1)} ลิตร (${bill.volume.toFixed(2)} ลบ.ม.)`,
       `ค่าน้ำ: ${bill.waterCost.toFixed(2)} บาท`,
       `ค่าบริการ: ${bill.serviceFee.toFixed(2)} บาท`,
       ...(bill.otherCharges > 0 ? [`ค่าใช้จ่ายอื่นๆ: ${bill.otherCharges.toFixed(2)} บาท`] : []),

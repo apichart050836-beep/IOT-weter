@@ -1054,7 +1054,7 @@ export default function DashboardPage() {
                   </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     เลือกรับแจ้งเตือนแบบ push message ทาง LINE ได้เลย —
-                    หรือพิมพ์คุยกับ LINE OA เพื่อดูใช้น้ำวันนี้/เดือนนี้/บิลปัจจุบัน
+                    หรือพิมพ์คุยกับ LINE OA เพื่อดูใช้น้ำแล้วกี่หน่วย/เดือนนี้/บิลปัจจุบัน/ตรวจสอบแบต
                   </p>
 
                   <div className="space-y-2">
@@ -1091,7 +1091,7 @@ export default function DashboardPage() {
                 <>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     เชื่อมต่อบัญชี LINE ของคุณเพื่อรับแจ้งเตือนแบบ push message
-                    และพิมพ์คุยกับ LINE OA เพื่อดูใช้น้ำวันนี้/เดือนนี้/บิลปัจจุบันได้ทันที
+                    และพิมพ์คุยกับ LINE OA เพื่อดูใช้น้ำแล้วกี่หน่วย/เดือนนี้/บิลปัจจุบัน/ตรวจสอบแบตได้ทันที
                   </p>
                   <button
                     onClick={connectLine}

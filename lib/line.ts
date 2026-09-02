@@ -95,9 +95,11 @@ export const QUICK_REPLY_MENU = {
   text: "เลือกดูข้อมูลได้เลยครับ 💧",
   quickReply: {
     items: [
-      { type: "action", action: { type: "message", label: "ใช้น้ำวันนี้", text: "ใช้น้ำวันนี้" } },
+      { type: "action", action: { type: "message", label: "ใช้น้ำแล้วกี่หน่วย", text: "ใช้น้ำแล้วกี่หน่วย" } },
       { type: "action", action: { type: "message", label: "ใช้น้ำเดือนนี้", text: "ใช้น้ำเดือนนี้" } },
       { type: "action", action: { type: "message", label: "บิลค่าน้ำปัจจุบัน", text: "บิลค่าน้ำปัจจุบัน" } },
+      { type: "action", action: { type: "message", label: "ตรวจสอบแบต", text: "ตรวจสอบแบต" } },
     ],
   },
 };
+
